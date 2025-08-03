@@ -2,6 +2,8 @@ package com.SkrinVex.OfoxMessenger
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.ResolveInfo
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
@@ -12,8 +14,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -25,19 +29,18 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.Add
-import androidx.compose.material.icons.rounded.Delete
-import androidx.compose.material.icons.rounded.Edit
-import androidx.compose.material.icons.rounded.MoreVert
-import androidx.compose.material.icons.rounded.Share
+import androidx.compose.material.icons.rounded.*
 import androidx.compose.material.ripple.rememberRipple
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
@@ -70,6 +73,15 @@ import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.withStyle
+import androidx.core.graphics.drawable.toBitmap
+import kotlinx.coroutines.delay
+import java.util.regex.Pattern
 
 class PostsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -105,7 +117,20 @@ data class PostItem(
     val content: String,
     val image_urls: List<String>? = null,
     val created_at: String,
-    val is_edited: Boolean = false
+    val is_edited: Boolean = false,
+    val comments: List<CommentItem> = emptyList(),
+    val likes: Map<String, String?> = emptyMap(), // Изменено на Map<String, String?>
+    val userReaction: String? = null
+)
+
+data class CommentItem(
+    val id: String,
+    val user_id: String,
+    val username: String? = null,
+    val nickname: String? = null,
+    val profile_photo: String? = null,
+    val content: String,
+    val created_at: String
 )
 
 class PostsViewModel(private val uid: String) : ViewModel() {
@@ -156,6 +181,45 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                         }
                         val userData = userSnapshot.value as? Map<String, Any>
                         val imageUrls = (map["image_urls"] as? List<*>)?.mapNotNull { it as? String }
+                        val comments = mutableListOf<CommentItem>()
+                        val commentsSnapshot = withContext(Dispatchers.IO) {
+                            FirebaseDatabase.getInstance()
+                                .getReference("posts/${child.key}/comments")
+                                .get()
+                                .await()
+                        }
+                        commentsSnapshot.children.forEach { commentChild ->
+                            val commentMap = commentChild.value as? Map<String, Any>
+                            if (commentMap != null) {
+                                val commentUserSnapshot = withContext(Dispatchers.IO) {
+                                    FirebaseDatabase.getInstance()
+                                        .getReference("users/${commentMap["user_id"]}")
+                                        .get()
+                                        .await()
+                                }
+                                val commentUserData = commentUserSnapshot.value as? Map<String, Any>
+                                comments.add(
+                                    CommentItem(
+                                        id = commentChild.key ?: "",
+                                        user_id = commentMap["user_id"] as? String ?: "",
+                                        username = commentUserData?.get("username") as? String,
+                                        nickname = commentUserData?.get("nickname") as? String,
+                                        profile_photo = commentUserData?.get("profile_photo") as? String,
+                                        content = commentMap["content"] as? String ?: "",
+                                        created_at = commentMap["created_at"] as? String ?: ""
+                                    )
+                                )
+                            }
+                        }
+                        // Загружаем реакции
+                        val reactionsSnapshot = withContext(Dispatchers.IO) {
+                            FirebaseDatabase.getInstance()
+                                .getReference("posts/${child.key}/reactions")
+                                .get()
+                                .await()
+                        }
+                        val reactions = reactionsSnapshot.children.associate { it.key!! to it.getValue(String::class.java) }
+                        val userReaction = reactions[uid]
                         val post = PostItem(
                             id = child.key,
                             user_id = map["user_id"] as? String ?: "",
@@ -166,7 +230,10 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                             content = map["content"] as? String ?: "",
                             image_urls = imageUrls,
                             created_at = map["created_at"] as? String ?: "",
-                            is_edited = map["is_edited"] as? Boolean ?: false
+                            is_edited = map["is_edited"] as? Boolean ?: false,
+                            comments = comments,
+                            likes = reactions,
+                            userReaction = userReaction
                         )
                         postsList.add(post)
                     }
@@ -205,6 +272,97 @@ class PostsViewModel(private val uid: String) : ViewModel() {
             Log.e(TAG, "Error converting Uri to File: ${e.message}", e)
             null
         }
+    }
+
+    fun toggleReaction(postId: String, userId: String, reactionType: String) {
+        val dbRef = FirebaseDatabase.getInstance().getReference("posts/$postId/reactions/$userId")
+        viewModelScope.launch {
+            try {
+                val snapshot = dbRef.get().await()
+                val currentReaction = snapshot.getValue(String::class.java)
+
+                val newReaction = when {
+                    currentReaction == reactionType -> null // Удаляем реакцию, если выбрана та же
+                    else -> reactionType // Устанавливаем новую реакцию
+                }
+
+                // Обновляем реакцию в Firebase
+                dbRef.setValue(newReaction).await()
+                Log.d("ReactionUpdate", "Reaction updated: $postId, user: $userId, type: $newReaction")
+
+                // Обновляем локальное состояние
+                loadPostsData()
+            } catch (e: Exception) {
+                Log.e("ReactionError", "Error updating reaction: ${e.message}", e)
+            }
+        }
+    }
+
+    fun getReactionCounts(postId: String, onComplete: (Int, Int) -> Unit) {
+        val reactionsRef = FirebaseDatabase.getInstance().getReference("posts/$postId/reactions")
+        viewModelScope.launch {
+            try {
+                val snapshot = reactionsRef.get().await()
+                val likes = snapshot.children.count { it.getValue(String::class.java) == "like" }
+                val dislikes = snapshot.children.count { it.getValue(String::class.java) == "dislike" }
+                Log.d("ReactionCount", "Post $postId: Likes=$likes, Dislikes=$dislikes")
+                onComplete(likes, dislikes)
+            } catch (e: Exception) {
+                Log.e("ReactionCountError", "Error fetching reaction counts: ${e.message}", e)
+                onComplete(0, 0)
+            }
+        }
+    }
+
+    // Function to detect links in content and find compatible apps
+    fun detectLinksAndApps(content: String, context: Context): Pair<List<String>, List<List<Pair<ResolveInfo, String>>>> {
+        val urlPattern = Pattern.compile(
+            "(https?://[\\w\\-\\.]+(:\\d+)?(/[\\w\\-\\.]*)*(\\?[\\w\\-\\.=&%]*)?(#[\\w\\-]*)?)",
+            Pattern.CASE_INSENSITIVE
+        )
+        val matcher = urlPattern.matcher(content)
+        val links = mutableListOf<String>()
+        val appsPerLink = mutableListOf<List<Pair<ResolveInfo, String>>>()
+        val TAG = "PostsActivityDebug"
+
+        while (matcher.find()) {
+            val url = matcher.group()
+            links.add(url)
+            Log.d(TAG, "Detected URL: $url")
+
+            // Попробуем обработать как обычный URL
+            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                addCategory(Intent.CATEGORY_DEFAULT)
+            }
+
+            // Получаем список приложений для стандартного URL
+            val resolveInfo = context.packageManager.queryIntentActivities(intent, PackageManager.MATCH_ALL)
+            val appsWithLabels = resolveInfo.map { resolve ->
+                val label = resolve.loadLabel(context.packageManager).toString()
+                Pair(resolve, label)
+            }
+
+            // Проверяем кастомные схемы (например, tg://, youtube://)
+            val uri = Uri.parse(url)
+            val scheme = uri.scheme?.lowercase() ?: ""
+            val customApps = mutableListOf<Pair<ResolveInfo, String>>()
+            if (scheme != "http" && scheme != "https") {
+                val customIntent = Intent(Intent.ACTION_VIEW, uri)
+                val customResolveInfo = context.packageManager.queryIntentActivities(customIntent, PackageManager.MATCH_ALL)
+                customResolveInfo.forEach { resolve ->
+                    val label = resolve.loadLabel(context.packageManager).toString()
+                    customApps.add(Pair(resolve, label))
+                }
+                Log.d(TAG, "Custom scheme ($scheme) apps: ${customApps.map { it.second }}")
+            }
+
+            // Объединяем списки, избегая дубликатов
+            val combinedApps = (appsWithLabels + customApps).distinctBy { it.first.activityInfo.packageName }
+            appsPerLink.add(combinedApps)
+            Log.d(TAG, "Apps for URL $url: ${combinedApps.map { it.second }}")
+        }
+
+        return Pair(links, appsPerLink)
     }
 
     fun createPost(title: String, content: String, imageUris: List<Uri>, context: Context, onComplete: (Boolean, String) -> Unit) {
@@ -344,6 +502,41 @@ class PostsViewModel(private val uid: String) : ViewModel() {
             } catch (e: Exception) {
                 Log.e(TAG, "Error deleting post: ${e.message}", e)
                 onComplete(false, "Ошибка удаления поста: ${e.message}")
+            }
+        }
+    }
+
+    fun addComment(postId: String, userId: String, content: String, onComplete: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val commentId = FirebaseDatabase.getInstance().getReference("posts/$postId/comments").push().key
+                    ?: return@launch onComplete(false, "Ошибка создания ID комментария")
+                val comment = mapOf(
+                    "user_id" to userId,
+                    "content" to content,
+                    "created_at" to SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date())
+                )
+                FirebaseDatabase.getInstance()
+                    .getReference("posts/$postId/comments/$commentId")
+                    .setValue(comment)
+                    .await()
+                onComplete(true, "Комментарий добавлен успешно")
+            } catch (e: Exception) {
+                onComplete(false, "Ошибка добавления комментария: ${e.message}")
+            }
+        }
+    }
+
+    fun deleteComment(postId: String, commentId: String, onComplete: (Boolean, String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                FirebaseDatabase.getInstance()
+                    .getReference("posts/$postId/comments/$commentId")
+                    .removeValue()
+                    .await()
+                onComplete(true, "Комментарий удалён успешно")
+            } catch (e: Exception) {
+                onComplete(false, "Ошибка удаления комментария: ${e.message}")
             }
         }
     }
@@ -859,6 +1052,75 @@ fun DeleteConfirmationDialog(
     )
 }
 
+@Composable
+fun ReactionButtons(
+    postId: String,
+    userId: String,
+    userReaction: String?,
+    likesCount: Int,
+    dislikesCount: Int,
+    viewModel: PostsViewModel
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        // Кнопка лайка
+        IconButton(
+            onClick = { viewModel.toggleReaction(postId, userId, "like") },
+            modifier = Modifier
+                .size(40.dp)
+                .background(
+                    color = if (userReaction == "like") Color(0xFFFF6B35).copy(alpha = 0.2f) else Color.Transparent,
+                    shape = CircleShape
+                ),
+            enabled = true // Реакции разрешены для всех постов
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Rounded.ThumbUp,
+                    contentDescription = "Like",
+                    tint = if (userReaction == "like") Color(0xFFFF6B35) else Color.White
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = likesCount.toString(),
+                    color = Color.White,
+                    fontSize = 14.sp
+                )
+            }
+        }
+
+        // Кнопка дизлайка
+        IconButton(
+            onClick = { viewModel.toggleReaction(postId, userId, "dislike") },
+            modifier = Modifier
+                .size(40.dp)
+                .background(
+                    color = if (userReaction == "dislike") Color(0xFFFF6B35).copy(alpha = 0.2f) else Color.Transparent,
+                    shape = CircleShape
+                ),
+            enabled = true // Реакции разрешены для всех постов
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Rounded.ThumbDown,
+                    contentDescription = "Dislike",
+                    tint = if (userReaction == "dislike") Color(0xFFFF6B35) else Color.White
+                )
+                Spacer(modifier = Modifier.width(4.dp))
+                Text(
+                    text = dislikesCount.toString(),
+                    color = Color.White,
+                    fontSize = 14.sp
+                )
+            }
+        }
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
@@ -867,6 +1129,9 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
     var showBottomSheet by remember { mutableStateOf(false) }
     var showEditDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var showCommentsSheet by remember { mutableStateOf(false) }
+    var likesCount by remember { mutableStateOf(0) }
+    var dislikesCount by remember { mutableStateOf(0) }
     var editPostState by remember {
         mutableStateOf(
             CreatePostState(
@@ -877,6 +1142,23 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
             )
         )
     }
+
+    // Load reaction counts
+    LaunchedEffect(post.id) {
+        post.id?.let { postId ->
+            viewModel.getReactionCounts(postId) { likes, dislikes ->
+                likesCount = likes
+                dislikesCount = dislikes
+            }
+        }
+    }
+
+    // Detect links and compatible apps
+    val linkData = remember(post.content) {
+        viewModel.detectLinksAndApps(post.content, context)
+    }
+    val links = linkData.first
+    val appsPerLink = linkData.second
 
     Card(
         shape = RoundedCornerShape(12.dp),
@@ -889,7 +1171,6 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
         )
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            // ——— Автор поста ———
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier.clickable {
@@ -921,11 +1202,69 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold
                 )
+                // Display app selection for links
+                if (links.isNotEmpty()) {
+                    Row(
+                        modifier = Modifier
+                            .horizontalScroll(rememberScrollState())
+                            .padding(start = 8.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        appsPerLink.forEachIndexed { index, apps ->
+                            if (apps.isNotEmpty()) {
+                                apps.forEach { (app, label) ->
+                                    val icon = app.loadIcon(context.packageManager)
+                                    if (icon != null) {
+                                        Image(
+                                            bitmap = icon.toBitmap().asImageBitmap(),
+                                            contentDescription = label,
+                                            modifier = Modifier
+                                                .size(24.dp)
+                                                .clip(CircleShape)
+                                                .clickable {
+                                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(links[index])).apply {
+                                                        setPackage(app.activityInfo.packageName)
+                                                    }
+                                                    context.startActivity(intent)
+                                                }
+                                        )
+                                    } else {
+                                        Text(
+                                            text = label,
+                                            color = Color(0xFFFF6B35),
+                                            fontSize = 12.sp,
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(4.dp))
+                                                .clickable {
+                                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(links[index])).apply {
+                                                        setPackage(app.activityInfo.packageName)
+                                                    }
+                                                    context.startActivity(intent)
+                                                }
+                                                .padding(4.dp)
+                                        )
+                                    }
+                                }
+                            }
+                            // Всегда показываем кнопку "Открыть в браузере"
+                            Icon(
+                                imageVector = Icons.Rounded.OpenInBrowser,
+                                contentDescription = "Открыть в браузере",
+                                tint = Color(0xFFFF6B35),
+                                modifier = Modifier
+                                    .size(24.dp)
+                                    .clickable {
+                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(links[index]))
+                                        context.startActivity(intent)
+                                    }
+                            )
+                        }
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // ——— Заголовок и кнопка ———
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -961,9 +1300,41 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
 
             Spacer(modifier = Modifier.height(8.dp))
 
+            // Highlight links in content
+            val annotatedString = buildAnnotatedString {
+                val matcher = Pattern.compile(
+                    "(https?://[\\w\\-\\.]+(:\\d+)?(/[\\w\\-\\.]*)*(\\?[\\w\\-\\.=&%]*)?(#[\\w\\-]*)?)"
+                ).matcher(post.content)
+                var lastEnd = 0
+                while (matcher.find()) {
+                    append(post.content.substring(lastEnd, matcher.start()))
+                    val url = matcher.group()
+                    withStyle(
+                        style = SpanStyle(
+                            color = Color(0xFFFF6B35),
+                            textDecoration = TextDecoration.Underline
+                        )
+                    ) {
+                        append(url)
+                    }
+                    lastEnd = matcher.end()
+                }
+                append(post.content.substring(lastEnd))
+            }
             Text(
-                text = post.content,
-                style = MaterialTheme.typography.bodyMedium
+                text = annotatedString,
+                style = MaterialTheme.typography.bodyMedium,
+                modifier = Modifier.clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null
+                ) {
+                    links.forEach { link ->
+                        if (annotatedString.text.contains(link)) {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(link))
+                            context.startActivity(intent)
+                        }
+                    }
+                }
             )
 
             post.image_urls?.takeIf { it.isNotEmpty() }?.let { urls ->
@@ -1019,10 +1390,68 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
                     }
                 }
             }
+
+            Spacer(modifier = Modifier.height(8.dp))
+
+            // Add reaction buttons
+            post.id?.let { postId ->
+                ReactionButtons(
+                    postId = postId,
+                    userId = currentUid,
+                    userReaction = post.userReaction,
+                    likesCount = likesCount,
+                    dislikesCount = dislikesCount,
+                    viewModel = viewModel
+                )
+            }
+
+            if (post.comments.isNotEmpty()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color(0xFF2A2A2A))
+                        .clickable { showCommentsSheet = true }
+                        .padding(8.dp)
+                ) {
+                    post.comments.take(3).forEach { comment ->
+                        AsyncImage(
+                            model = comment.profile_photo?.takeIf { it.isNotBlank() }?.let { "https://api.skrinvex.su$it" },
+                            contentDescription = "Аватар комментатора",
+                            modifier = Modifier
+                                .size(24.dp)
+                                .clip(CircleShape)
+                                .background(Color(0xFF333333)),
+                            contentScale = ContentScale.Crop
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                    }
+                    Text(
+                        text = "Комментарии (${post.comments.size})",
+                        color = Color.White,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.Rounded.ArrowForward,
+                        contentDescription = "Открыть комментарии",
+                        tint = Color(0xFFFF6B35),
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            } else {
+                Button(
+                    onClick = { showCommentsSheet = true },
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF6B35)),
+                    modifier = Modifier.align(Alignment.CenterHorizontally)
+                ) {
+                    Text("Написать комментарий", color = Color.Black, fontSize = 14.sp)
+                }
+            }
         }
     }
 
-    // ——— Нижнее меню опций ———
     if (showBottomSheet) {
         ModalBottomSheet(
             onDismissRequest = { showBottomSheet = false },
@@ -1069,7 +1498,6 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
         }
     }
 
-    // ——— Диалог редактирования ———
     if (showEditDialog) {
         val pickImages = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris: List<Uri>? ->
             if (uris != null && uris.size + editPostState.existingImageUrls.size <= 5) {
@@ -1118,10 +1546,8 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
         )
     }
 
-    // ——— Диалог удаления ———
     if (showDeleteDialog) {
         DeleteConfirmationDialog(
-            itemType = "пост",
             onConfirm = {
                 post.id?.let { postId ->
                     viewModel.deletePost(postId) { success, message ->
@@ -1132,6 +1558,325 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
             },
             onDismiss = { showDeleteDialog = false }
         )
+    }
+
+    if (showCommentsSheet) {
+        CommentsBottomSheet(
+            post = post,
+            currentUid = currentUid,
+            viewModel = viewModel,
+            onDismiss = { showCommentsSheet = false }
+        )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CommentsBottomSheet(
+    post: PostItem,
+    currentUid: String,
+    viewModel: PostsViewModel,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
+
+    var commentText by remember { mutableStateOf("") }
+    var isLoading by remember { mutableStateOf(false) }
+    var showActionsSheet by remember { mutableStateOf<CommentItem?>(null) }
+
+    val sheetState = rememberModalBottomSheetState(
+        skipPartiallyExpanded = true,
+    )
+
+    // Focus текстового поля при первом запуске
+    LaunchedEffect(Unit) {
+        delay(300) // небольшая задержка для стабильности
+        focusRequester.requestFocus()
+    }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = Color(0xFF1E1E1E).copy(alpha = 0.95f),
+        contentColor = Color.White,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        tonalElevation = 8.dp,
+        dragHandle = {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        brush = Brush.verticalGradient(
+                            colors = listOf(
+                                Color(0xFFFF6B35).copy(alpha = 0.2f),
+                                Color(0xFF1E1E1E).copy(alpha = 0.95f)
+                            )
+                        )
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .padding(vertical = 12.dp)
+                        .width(36.dp)
+                        .height(4.dp)
+                        .background(
+                            color = Color(0xFFFF6B35).copy(alpha = 0.6f),
+                            shape = RoundedCornerShape(50)
+                        )
+                )
+            }
+        }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .imePadding()
+                .padding(horizontal = 20.dp, vertical = 8.dp)
+        ) {
+            Text(
+                text = "Комментарии (${post.comments.size})",
+                color = Color.White,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+            ) {
+                items(post.comments) { comment ->
+                    CommentItem(
+                        comment = comment,
+                        currentUid = currentUid,
+                        onProfileClick = {
+                            val intent = Intent(context, ProfileViewActivity::class.java).apply {
+                                putExtra("uid", currentUid)
+                                if (comment.user_id != currentUid) {
+                                    putExtra("friend_uid", comment.user_id)
+                                    putExtra("notificationId", null as String?)
+                                }
+                            }
+                            context.startActivity(intent)
+                        },
+                        onLongPress = { showActionsSheet = comment }
+                    )
+                }
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = commentText,
+                    onValueChange = { commentText = it },
+                    placeholder = { Text("Напишите комментарий", color = Color.Gray) },
+                    shape = RoundedCornerShape(20.dp),
+                    modifier = Modifier
+                        .weight(1f)
+                        .background(Color(0xFF2A2A2A), shape = RoundedCornerShape(20.dp))
+                        .padding(end = 8.dp)
+                        .focusRequester(focusRequester),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = Color.White,
+                        unfocusedTextColor = Color.White,
+                        focusedBorderColor = Color.Transparent,
+                        unfocusedBorderColor = Color.Transparent,
+                        cursorColor = Color(0xFFFF6B35)
+                    ),
+                    maxLines = 4
+                )
+
+                IconButton(
+                    onClick = {
+                        if (commentText.isNotBlank()) {
+                            isLoading = true
+                            keyboardController?.hide()
+                            viewModel.addComment(post.id!!, currentUid, commentText) { success, message ->
+                                isLoading = false
+                                if (success) {
+                                    commentText = ""
+                                } else {
+                                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                                }
+                            }
+                        }
+                    },
+                    enabled = !isLoading
+                ) {
+                    if (isLoading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(24.dp),
+                            color = Color(0xFFFF6B35),
+                            strokeWidth = 2.dp
+                        )
+                    } else {
+                        Icon(
+                            imageVector = Icons.Rounded.Send,
+                            contentDescription = "Отправить комментарий",
+                            tint = Color(0xFFFF6B35)
+                        )
+                    }
+                }
+            }
+            Spacer(modifier = Modifier.navigationBarsPadding())
+        }
+    }
+
+    // ——— BottomSheet действий с комментарием ———
+    showActionsSheet?.let { comment ->
+        CommentActionsBottomSheet(
+            comment = comment,
+            isOwnComment = comment.user_id == currentUid,
+            onCopy = {
+                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                val clip = android.content.ClipData.newPlainText("Comment", comment.content)
+                clipboard.setPrimaryClip(clip)
+                Toast.makeText(context, "Комментарий скопирован", Toast.LENGTH_SHORT).show()
+                showActionsSheet = null
+            },
+            onDelete = {
+                viewModel.deleteComment(post.id!!, comment.id) { success, message ->
+                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                    if (success) showActionsSheet = null
+                }
+            },
+            onDismiss = { showActionsSheet = null }
+        )
+    }
+}
+
+@Composable
+fun CommentItem(
+    comment: CommentItem,
+    currentUid: String,
+    onProfileClick: () -> Unit,
+    onLongPress: () -> Unit
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onProfileClick)
+            .pointerInput(Unit) {
+                detectTapGestures(onLongPress = { onLongPress() })
+            },
+        color = Color(0xFF2A2A2A).copy(alpha = 0.95f),
+        shape = RoundedCornerShape(12.dp),
+        tonalElevation = 4.dp
+    ) {
+        Row(
+            modifier = Modifier
+                .padding(12.dp),
+            verticalAlignment = Alignment.Top
+        ) {
+            AsyncImage(
+                model = comment.profile_photo?.takeIf { it.isNotBlank() }?.let { "https://api.skrinvex.su$it" },
+                contentDescription = "Аватар комментатора",
+                modifier = Modifier
+                    .size(32.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF333333)),
+                contentScale = ContentScale.Crop
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Column {
+                Text(
+                    text = comment.nickname ?: comment.username ?: "Пользователь",
+                    color = Color.White,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = comment.content,
+                    color = Color.White,
+                    fontSize = 14.sp
+                )
+                Text(
+                    text = comment.created_at,
+                    color = Color.Gray,
+                    fontSize = 12.sp
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun CommentActionsBottomSheet(
+    comment: CommentItem,
+    isOwnComment: Boolean,
+    onCopy: () -> Unit,
+    onDelete: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color(0xFF1E1E1E).copy(alpha = 0.95f),
+        contentColor = Color.White,
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        tonalElevation = 8.dp,
+        dragHandle = {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .background(
+                        brush = Brush.verticalGradient(
+                            colors = listOf(
+                                Color(0xFFFF6B35).copy(alpha = 0.2f),
+                                Color(0xFF1E1E1E).copy(alpha = 0.95f)
+                            )
+                        )
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .padding(vertical = 12.dp)
+                        .width(36.dp)
+                        .height(4.dp)
+                        .background(
+                            color = Color(0xFFFF6B35).copy(alpha = 0.6f),
+                            shape = RoundedCornerShape(50)
+                        )
+                )
+            }
+        }
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 20.dp, vertical = 8.dp)
+        ) {
+            Text(
+                text = "Действия с комментарием",
+                color = Color.White,
+                fontSize = 20.sp,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(bottom = 16.dp)
+            )
+            if (isOwnComment) {
+                OptionButton(
+                    icon = Icons.Rounded.Delete,
+                    label = "Удалить",
+                    onClick = onDelete
+                )
+            } else {
+                OptionButton(
+                    icon = Icons.Rounded.FileCopy,
+                    label = "Копировать",
+                    onClick = onCopy
+                )
+            }
+            Spacer(modifier = Modifier.navigationBarsPadding())
+        }
     }
 }
 
