@@ -112,7 +112,7 @@ fun CrashScreen(
             }
             Spacer(modifier = Modifier.height(12.dp))
             Text(
-                text = "ofox.greenchat.kz/crash/",
+                text = "ofox.skrinvex.su/crash/",
                 color = Color(0xFF64B5F6),
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
