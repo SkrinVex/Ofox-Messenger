@@ -1,0 +1,49 @@
+{
+  "project_info": {
+    "project_number": "666961303590",
+    "firebase_url": "https://ofox-messenger-default-rtdb.firebaseio.com",
+    "project_id": "ofox-messenger",
+    "storage_bucket": "ofox-messenger.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:666961303590:android:7c60f34ef6a3d9f791eee7",
+        "android_client_info": {
+          "package_name": "com.sgstudio.OfoxMessenger"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCIYfeYKQgcjHUWiM8aJFAKIivPZIk9ALA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:666961303590:android:b6b8bcd624a6918291eee7",
+        "android_client_info": {
+          "package_name": "com.SkrinVex.OfoxMessenger"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCIYfeYKQgcjHUWiM8aJFAKIivPZIk9ALA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
