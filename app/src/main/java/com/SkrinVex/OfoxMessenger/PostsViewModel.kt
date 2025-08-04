@@ -257,41 +257,75 @@ class PostsViewModel(private val uid: String) : ViewModel() {
         val appsPerLink = mutableListOf<List<Pair<ResolveInfo, String>>>()
         val TAG = "PostsActivityDebug"
 
+        // Список популярных приложений с их схемами и доменами
+        val appSchemes = mapOf(
+            "org.telegram.messenger" to listOf("tg", "https://t.me", "https://telegram.me"),
+            "com.google.android.youtube" to listOf("youtube", "https://www.youtube.com", "https://youtu.be"),
+            "com.zhiliaoapp.musically" to listOf("tiktok", "https://www.tiktok.com"),
+            "com.twitter.android" to listOf("twitter", "https://twitter.com", "https://x.com"),
+            "com.instagram.android" to listOf("instagram", "https://www.instagram.com"),
+            "com.facebook.katana" to listOf("fb", "https://www.facebook.com"),
+            "com.exteragram.messenger" to listOf("tg", "https://t.me", "https://telegram.me")
+        )
+
         while (matcher.find()) {
             val url = matcher.group()
             links.add(url)
             Log.d(TAG, "Detected URL: $url")
 
-            // Попробуем обработать как обычный URL
-            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
-                addCategory(Intent.CATEGORY_DEFAULT)
-            }
-
-            // Получаем список приложений для стандартного URL
-            val resolveInfo = context.packageManager.queryIntentActivities(intent, PackageManager.MATCH_ALL)
-            val appsWithLabels = resolveInfo.map { resolve ->
-                val label = resolve.loadLabel(context.packageManager).toString()
-                Pair(resolve, label)
-            }
-
-            // Проверяем кастомные схемы (например, tg://, youtube://)
             val uri = Uri.parse(url)
             val scheme = uri.scheme?.lowercase() ?: ""
-            val customApps = mutableListOf<Pair<ResolveInfo, String>>()
-            if (scheme != "http" && scheme != "https") {
-                val customIntent = Intent(Intent.ACTION_VIEW, uri)
-                val customResolveInfo = context.packageManager.queryIntentActivities(customIntent, PackageManager.MATCH_ALL)
-                customResolveInfo.forEach { resolve ->
-                    val label = resolve.loadLabel(context.packageManager).toString()
-                    customApps.add(Pair(resolve, label))
+            val host = uri.host?.lowercase() ?: ""
+
+            // Собираем приложения, которые могут обработать ссылку
+            val appsWithLabels = mutableListOf<Pair<ResolveInfo, String>>()
+
+            // Проверяем кастомные схемы и домены для каждого приложения
+            appSchemes.forEach { (packageName, schemes) ->
+                val intent = Intent(Intent.ACTION_VIEW, uri).apply {
+                    addCategory(Intent.CATEGORY_DEFAULT)
+                    setPackage(packageName) // Ограничиваем конкретным пакетом
                 }
-                Log.d(TAG, "Custom scheme ($scheme) apps: ${customApps.map { it.second }}")
+                val resolveInfo = context.packageManager.queryIntentActivities(intent, PackageManager.MATCH_ALL)
+                if (resolveInfo.isNotEmpty()) {
+                    val matchesScheme = schemes.any { scheme ->
+                        if (scheme.startsWith("http")) {
+                            url.contains(scheme, ignoreCase = true)
+                        } else {
+                            scheme == uri.scheme // Исправлено: используем uri.scheme вместо this.scheme
+                        }
+                    }
+                    if (matchesScheme) {
+                        resolveInfo.forEach { resolve ->
+                            val label = resolve.loadLabel(context.packageManager).toString()
+                            appsWithLabels.add(Pair(resolve, label))
+                            Log.d(TAG, "App $packageName ($label) can handle URL: $url")
+                        }
+                    }
+                }
             }
 
-            // Объединяем списки, избегая дубликатов
-            val combinedApps = (appsWithLabels + customApps).distinctBy { it.first.activityInfo.packageName }
-            appsPerLink.add(combinedApps)
-            Log.d(TAG, "Apps for URL $url: ${combinedApps.map { it.second }}")
+            // Если нет подходящих приложений, проверяем стандартный Intent для HTTP/HTTPS
+            if (appsWithLabels.isEmpty() && (scheme == "http" || scheme == "https")) {
+                val genericIntent = Intent(Intent.ACTION_VIEW, uri).apply {
+                    addCategory(Intent.CATEGORY_DEFAULT)
+                }
+                val genericApps = context.packageManager.queryIntentActivities(genericIntent, PackageManager.MATCH_ALL)
+                genericApps.forEach { resolve ->
+                    val packageName = resolve.activityInfo.packageName
+                    // Исключаем браузеры, если есть специфичные приложения
+                    if (!appSchemes.containsKey(packageName)) {
+                        val label = resolve.loadLabel(context.packageManager).toString()
+                        appsWithLabels.add(Pair(resolve, label))
+                        Log.d(TAG, "Generic app $packageName ($label) can handle URL: $url")
+                    }
+                }
+            }
+
+            // Удаляем дубликаты
+            val uniqueApps = appsWithLabels.distinctBy { it.first.activityInfo.packageName }
+            appsPerLink.add(uniqueApps)
+            Log.d(TAG, "Apps for URL $url: ${uniqueApps.map { it.second }}")
         }
 
         return Pair(links, appsPerLink)

@@ -17,7 +17,7 @@
         android:name=".App"
         tools:targetApi="31">
 
-        <!-- SplashActivity теперь главная точка входа -->
+        <!-- SplashActivity -->
         <activity
             android:name=".SplashActivity"
             android:exported="true"
@@ -28,19 +28,50 @@
             </intent-filter>
         </activity>
 
-        <!-- MainActivity теперь только для логина -->
+        <!-- MainActivity -->
         <activity
             android:name=".MainActivity"
             android:exported="false"
             android:theme="@style/Theme.OfoxMessenger" />
 
-        <activity android:name=".ProfileEditActivity"/>
-        <activity android:name=".MainPageActivity"/>
+        <!-- PostsActivity с intent-фильтрами для deep link'ов -->
+        <activity
+            android:name=".PostsActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <!-- Telegram -->
+                <data android:scheme="tg" />
+                <data android:scheme="https" android:host="t.me" />
+                <data android:scheme="https" android:host="telegram.me" />
+                <!-- YouTube -->
+                <data android:scheme="youtube" />
+                <data android:scheme="https" android:host="www.youtube.com" />
+                <data android:scheme="https" android:host="youtu.be" />
+                <!-- TikTok -->
+                <data android:scheme="tiktok" />
+                <data android:scheme="https" android:host="www.tiktok.com" />
+                <!-- Twitter/X -->
+                <data android:scheme="twitter" />
+                <data android:scheme="https" android:host="twitter.com" />
+                <data android:scheme="https" android:host="x.com" />
+                <!-- Instagram -->
+                <data android:scheme="instagram" />
+                <data android:scheme="https" android:host="www.instagram.com" />
+                <!-- Facebook -->
+                <data android:scheme="fb" />
+                <data android:scheme="https" android:host="www.facebook.com" />
+            </intent-filter>
+        </activity>
+
+        <activity android:name=".ProfileEditActivity" />
+        <activity android:name=".MainPageActivity" />
         <activity android:name=".ProfileViewActivity" />
         <activity android:name=".ui.common.CrashActivity" />
         <activity android:name=".FriendsActivity" />
         <activity android:name=".ui.viewer.PhotoViewerActivity" />
-        <activity android:name=".PostsActivity" />
         <activity android:name=".ChatActivity" />
     </application>
 

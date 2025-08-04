@@ -706,39 +706,33 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
                                                     val intent = Intent(Intent.ACTION_VIEW, Uri.parse(links[index])).apply {
                                                         setPackage(app.activityInfo.packageName)
                                                     }
-                                                    context.startActivity(intent)
-                                                }
-                                        )
-                                    } else {
-                                        Text(
-                                            text = label,
-                                            color = Color(0xFFFF6B35),
-                                            fontSize = 12.sp,
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(4.dp))
-                                                .clickable {
-                                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(links[index])).apply {
-                                                        setPackage(app.activityInfo.packageName)
+                                                    try {
+                                                        context.startActivity(intent)
+                                                    } catch (e: Exception) {
+                                                        Toast.makeText(context, "Не удалось открыть приложение", Toast.LENGTH_SHORT).show()
                                                     }
-                                                    context.startActivity(intent)
                                                 }
-                                                .padding(4.dp)
                                         )
                                     }
                                 }
+                            } else {
+                                // Показываем кнопку "Открыть в браузере" только если нет подходящих приложений
+                                Icon(
+                                    imageVector = Icons.Rounded.OpenInBrowser,
+                                    contentDescription = "Открыть в браузере",
+                                    tint = Color(0xFFFF6B35),
+                                    modifier = Modifier
+                                        .size(24.dp)
+                                        .clickable {
+                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(links[index]))
+                                            try {
+                                                context.startActivity(intent)
+                                            } catch (e: Exception) {
+                                                Toast.makeText(context, "Не удалось открыть ссылку", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                )
                             }
-                            // Всегда показываем кнопку "Открыть в браузере"
-                            Icon(
-                                imageVector = Icons.Rounded.OpenInBrowser,
-                                contentDescription = "Открыть в браузере",
-                                tint = Color(0xFFFF6B35),
-                                modifier = Modifier
-                                    .size(24.dp)
-                                    .clickable {
-                                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(links[index]))
-                                        context.startActivity(intent)
-                                    }
-                            )
                         }
                     }
                 }
@@ -809,10 +803,28 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
                     interactionSource = remember { MutableInteractionSource() },
                     indication = null
                 ) {
-                    links.forEach { link ->
+                    links.forEachIndexed { index, link ->
                         if (annotatedString.text.contains(link)) {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(link))
-                            context.startActivity(intent)
+                            val apps = appsPerLink.getOrNull(index)
+                            if (!apps.isNullOrEmpty()) {
+                                // Открываем первое подходящее приложение, если есть
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(link)).apply {
+                                    setPackage(apps[0].first.activityInfo.packageName)
+                                }
+                                try {
+                                    context.startActivity(intent)
+                                } catch (e: Exception) {
+                                    Toast.makeText(context, "Не удалось открыть приложение", Toast.LENGTH_SHORT).show()
+                                }
+                            } else {
+                                // Открываем в браузере, если нет приложений
+                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(link))
+                                try {
+                                    context.startActivity(intent)
+                                } catch (e: Exception) {
+                                    Toast.makeText(context, "Не удалось открыть ссылку", Toast.LENGTH_SHORT).show()
+                                }
+                            }
                         }
                     }
                 }
