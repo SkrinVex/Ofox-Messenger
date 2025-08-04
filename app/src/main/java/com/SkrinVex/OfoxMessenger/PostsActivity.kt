@@ -1244,7 +1244,6 @@ fun CommentItem(
             .fillMaxWidth()
             .padding(vertical = 4.dp)
             .clip(RoundedCornerShape(12.dp))
-            .clickable(onClick = onProfileClick)
             .pointerInput(Unit) {
                 detectTapGestures(onLongPress = { onLongPress() })
             },
@@ -1253,26 +1252,29 @@ fun CommentItem(
         tonalElevation = 4.dp
     ) {
         Row(
-            modifier = Modifier
-                .padding(12.dp),
+            modifier = Modifier.padding(12.dp),
             verticalAlignment = Alignment.Top
         ) {
+            // --- Аватар с переходом ---
             AsyncImage(
                 model = comment.profile_photo?.takeIf { it.isNotBlank() }?.let { "https://api.skrinvex.su$it" },
                 contentDescription = "Аватар комментатора",
                 modifier = Modifier
                     .size(32.dp)
                     .clip(CircleShape)
-                    .background(Color(0xFF333333)),
+                    .background(Color(0xFF333333))
+                    .clickable { onProfileClick() },
                 contentScale = ContentScale.Crop
             )
             Spacer(modifier = Modifier.width(8.dp))
             Column {
+                // --- Ник с переходом ---
                 Text(
                     text = comment.nickname ?: comment.username ?: "Пользователь",
                     color = Color.White,
                     fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.clickable { onProfileClick() }
                 )
                 Text(
                     text = comment.content,
