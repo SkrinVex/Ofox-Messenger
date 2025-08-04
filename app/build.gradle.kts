@@ -23,8 +23,6 @@ android {
     buildTypes {
         buildTypes {
             release {
-                isMinifyEnabled = true // Включаем обфускацию и сжатие
-                isShrinkResources = true // Удаление неиспользуемых ресурсов
                 proguardFiles(
                     getDefaultProguardFile("proguard-android-optimize.txt"),
                     "proguard-rules.pro"
