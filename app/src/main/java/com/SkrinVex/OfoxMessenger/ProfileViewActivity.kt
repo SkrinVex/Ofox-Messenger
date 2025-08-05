@@ -37,6 +37,7 @@ import com.SkrinVex.OfoxMessenger.network.ProfileCheckResponse
 import com.SkrinVex.OfoxMessenger.ui.common.enableInternetCheck
 import com.SkrinVex.OfoxMessenger.ui.theme.OfoxMessengerTheme
 import com.SkrinVex.OfoxMessenger.ui.viewer.PhotoViewerActivity
+import com.SkrinVex.OfoxMessenger.utils.SmartLinkText
 import com.google.accompanist.systemuicontroller.rememberSystemUiController
 
 class ProfileViewActivity : ComponentActivity() {
@@ -566,10 +567,10 @@ fun InfoCard(title: String, icon: androidx.compose.ui.graphics.vector.ImageVecto
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(icon, contentDescription = title, tint = Color(0xFFFF6B35), modifier = Modifier.size(24.dp))
                 Spacer(Modifier.width(8.dp))
-                Text(title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                SmartLinkText(title, color = Color.White, fontSize = 18.sp, fontWeight = FontWeight.Bold)
             }
             Spacer(Modifier.height(8.dp))
-            Text(value, color = Color.White.copy(alpha = 0.9f), fontSize = 15.sp, maxLines = maxLines)
+            SmartLinkText(value, color = Color.White.copy(alpha = 0.9f), fontSize = 15.sp, maxLines = maxLines)
         }
     }
 }

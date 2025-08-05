@@ -34,6 +34,7 @@ import com.SkrinVex.OfoxMessenger.network.Friend
 import com.SkrinVex.OfoxMessenger.network.FriendsResponse
 import com.SkrinVex.OfoxMessenger.ui.common.enableInternetCheck
 import com.SkrinVex.OfoxMessenger.ui.theme.OfoxMessengerTheme
+import com.SkrinVex.OfoxMessenger.utils.SmartLinkText
 import com.google.firebase.auth.FirebaseAuth
 
 class FriendsActivity : ComponentActivity() {
@@ -273,7 +274,7 @@ fun FriendCard(user: Friend, onClick: () -> Unit) {
                     fontSize = 16.sp,
                     fontWeight = FontWeight.Bold
                 )
-                Text(
+                SmartLinkText(
                     text = user.status ?: "Статус не указан",
                     color = Color.Gray,
                     fontSize = 14.sp

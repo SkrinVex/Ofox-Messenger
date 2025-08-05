@@ -47,6 +47,7 @@ import androidx.core.view.WindowCompat
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.SkrinVex.OfoxMessenger.ui.theme.OfoxMessengerTheme
+import com.SkrinVex.OfoxMessenger.utils.SmartLinkText
 import com.google.accompanist.systemuicontroller.rememberSystemUiController
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.launch
@@ -387,7 +388,7 @@ fun MessageCard(
                     modifier = Modifier.padding(12.dp),
                     verticalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Text(
+                    SmartLinkText(
                         text = message.content,
                         color = textColor,
                         fontSize = 15.sp,

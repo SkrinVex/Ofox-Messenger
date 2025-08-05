@@ -55,6 +55,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.core.graphics.drawable.toBitmap
+import com.SkrinVex.OfoxMessenger.utils.SmartLinkText
 import kotlinx.coroutines.delay
 import java.util.regex.Pattern
 
@@ -683,59 +684,6 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold
                 )
-                // Display app selection for links
-                if (links.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier
-                            .horizontalScroll(rememberScrollState())
-                            .padding(start = 8.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        appsPerLink.forEachIndexed { index, apps ->
-                            if (apps.isNotEmpty()) {
-                                apps.forEach { (app, label) ->
-                                    val icon = app.loadIcon(context.packageManager)
-                                    if (icon != null) {
-                                        Image(
-                                            bitmap = icon.toBitmap().asImageBitmap(),
-                                            contentDescription = label,
-                                            modifier = Modifier
-                                                .size(24.dp)
-                                                .clip(CircleShape)
-                                                .clickable {
-                                                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(links[index])).apply {
-                                                        setPackage(app.activityInfo.packageName)
-                                                    }
-                                                    try {
-                                                        context.startActivity(intent)
-                                                    } catch (e: Exception) {
-                                                        Toast.makeText(context, "Не удалось открыть приложение", Toast.LENGTH_SHORT).show()
-                                                    }
-                                                }
-                                        )
-                                    }
-                                }
-                            } else {
-                                // Показываем кнопку "Открыть в браузере" только если нет подходящих приложений
-                                Icon(
-                                    imageVector = Icons.Rounded.OpenInBrowser,
-                                    contentDescription = "Открыть в браузере",
-                                    tint = Color(0xFFFF6B35),
-                                    modifier = Modifier
-                                        .size(24.dp)
-                                        .clickable {
-                                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(links[index]))
-                                            try {
-                                                context.startActivity(intent)
-                                            } catch (e: Exception) {
-                                                Toast.makeText(context, "Не удалось открыть ссылку", Toast.LENGTH_SHORT).show()
-                                            }
-                                        }
-                                )
-                            }
-                        }
-                    }
-                }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -775,60 +723,7 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Highlight links in content
-            val annotatedString = buildAnnotatedString {
-                val matcher = Pattern.compile(
-                    "(https?://[\\w\\-\\.]+(:\\d+)?(/[\\w\\-\\.]*)*(\\?[\\w\\-\\.=&%]*)?(#[\\w\\-]*)?)"
-                ).matcher(post.content)
-                var lastEnd = 0
-                while (matcher.find()) {
-                    append(post.content.substring(lastEnd, matcher.start()))
-                    val url = matcher.group()
-                    withStyle(
-                        style = SpanStyle(
-                            color = Color(0xFFFF6B35),
-                            textDecoration = TextDecoration.Underline
-                        )
-                    ) {
-                        append(url)
-                    }
-                    lastEnd = matcher.end()
-                }
-                append(post.content.substring(lastEnd))
-            }
-            Text(
-                text = annotatedString,
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.clickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null
-                ) {
-                    links.forEachIndexed { index, link ->
-                        if (annotatedString.text.contains(link)) {
-                            val apps = appsPerLink.getOrNull(index)
-                            if (!apps.isNullOrEmpty()) {
-                                // Открываем первое подходящее приложение, если есть
-                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(link)).apply {
-                                    setPackage(apps[0].first.activityInfo.packageName)
-                                }
-                                try {
-                                    context.startActivity(intent)
-                                } catch (e: Exception) {
-                                    Toast.makeText(context, "Не удалось открыть приложение", Toast.LENGTH_SHORT).show()
-                                }
-                            } else {
-                                // Открываем в браузере, если нет приложений
-                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(link))
-                                try {
-                                    context.startActivity(intent)
-                                } catch (e: Exception) {
-                                    Toast.makeText(context, "Не удалось открыть ссылку", Toast.LENGTH_SHORT).show()
-                                }
-                            }
-                        }
-                    }
-                }
-            )
+            SmartLinkText(text = post.content)
 
             post.image_urls?.takeIf { it.isNotEmpty() }?.let { urls ->
                 Spacer(modifier = Modifier.height(10.dp))
@@ -1288,7 +1183,7 @@ fun CommentItem(
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.clickable { onProfileClick() }
                 )
-                Text(
+                SmartLinkText(
                     text = comment.content,
                     color = Color.White,
                     fontSize = 14.sp

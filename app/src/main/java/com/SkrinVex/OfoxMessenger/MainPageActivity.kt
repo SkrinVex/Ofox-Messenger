@@ -52,6 +52,7 @@ import com.SkrinVex.OfoxMessenger.network.NewsItem
 import com.SkrinVex.OfoxMessenger.ui.dialogs.DialogController
 import com.SkrinVex.OfoxMessenger.ui.dialogs.GlobalDialogHost
 import com.SkrinVex.OfoxMessenger.ui.viewer.PhotoViewerActivity
+import com.SkrinVex.OfoxMessenger.utils.SmartLinkText
 
 class MainPageActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -370,7 +371,7 @@ fun NewsCard(newsItem: NewsItem) {
                 style = MaterialTheme.typography.bodySmall.copy(color = Color.Gray)
             )
             Spacer(modifier = Modifier.height(8.dp))
-            Text(
+            SmartLinkText(
                 text = newsItem.content,
                 style = MaterialTheme.typography.bodyMedium
             )
@@ -463,7 +464,7 @@ fun NotificationCard(notification: NotificationItem) {
                 fontSize = 12.sp
             )
             Spacer(modifier = Modifier.height(8.dp))
-            Text(
+            SmartLinkText(
                 text = notification.content,
                 color = Color.White.copy(alpha = 0.8f),
                 fontSize = 14.sp
