@@ -3,6 +3,7 @@ package com.SkrinVex.OfoxMessenger
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.database.FirebaseDatabase
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -16,7 +17,8 @@ data class LoginState(
     val message: String? = null,
     val isSuccess: Boolean = false,
     val isEmailNotVerified: Boolean = false,
-    val isPasswordVisible: Boolean = false
+    val isPasswordVisible: Boolean = false,
+    val isAccountBlocked: Boolean = false
 )
 
 sealed class LoginEvent {
@@ -57,7 +59,7 @@ class LoginViewModel : ViewModel() {
 
     private fun performLogin() {
         viewModelScope.launch {
-            _state.value = _state.value.copy(isLoading = true, message = null)
+            _state.value = _state.value.copy(isLoading = true, message = null, isAccountBlocked = false)
 
             val email = _state.value.email.trim()
             val password = _state.value.password
@@ -77,12 +79,67 @@ class LoginViewModel : ViewModel() {
 
                 if (user != null) {
                     if (user.isEmailVerified) {
-                        onLoginSuccess?.invoke(user.uid)
-                        _state.value = _state.value.copy(
-                            isLoading = false,
-                            isSuccess = true,
-                            message = null
-                        )
+                        // Проверяем доступ к базе данных
+                        // Если пользователь заблокирован, любая попытка чтения вернет Permission denied
+                        try {
+                            // Делаем тестовый запрос к базе данных
+                            val testSnapshot = FirebaseDatabase.getInstance()
+                                .getReference("users/${user.uid}/profile")
+                                .get()
+                                .await()
+
+                            // Если мы дошли сюда, значит доступ к базе есть
+                            // Теперь проверяем данные пользователя
+                            val profileSnapshot = FirebaseDatabase.getInstance()
+                                .getReference("users/${user.uid}")
+                                .get()
+                                .await()
+
+                            val profile = profileSnapshot.value as? Map<String, Any>
+
+                            // Проверяем наличие email в профиле
+                            val profileEmail = profile?.get("email") as? String
+                            if (profileEmail.isNullOrEmpty()) {
+                                // Если нет email в профиле, это подозрительный аккаунт
+                                auth.signOut()
+                                _state.value = _state.value.copy(
+                                    isLoading = false,
+                                    message = "Ваш аккаунт некорректен. Обратитесь в службу поддержки."
+                                )
+                                return@launch
+                            }
+
+                            // Если все проверки пройдены, успешный вход
+                            onLoginSuccess?.invoke(user.uid)
+                            _state.value = _state.value.copy(
+                                isLoading = false,
+                                isSuccess = true,
+                                message = null
+                            )
+
+                        } catch (dbException: Exception) {
+                            // Обрабатываем ошибки доступа к базе данных
+                            auth.signOut()
+
+                            val errorMessage = when {
+                                // Ошибки доступа - скорее всего пользователь заблокирован
+                                dbException.message?.contains("Permission denied", true) == true ||
+                                        dbException.message?.contains("Database access denied", true) == true ||
+                                        dbException.message?.contains("Access denied", true) == true -> {
+                                    _state.value = _state.value.copy(isAccountBlocked = true)
+                                    "Ваш аккаунт был заблокирован администратором. Если считаете это ошибкой, обратитесь в службу поддержки."
+                                }
+                                // Другие ошибки базы данных
+                                else -> {
+                                    "Ошибка подключения к серверу. Проверьте интернет-соединение и попробуйте снова."
+                                }
+                            }
+
+                            _state.value = _state.value.copy(
+                                isLoading = false,
+                                message = errorMessage
+                            )
+                        }
                     } else {
                         _state.value = _state.value.copy(
                             isLoading = false,
