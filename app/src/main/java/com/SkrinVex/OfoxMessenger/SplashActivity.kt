@@ -130,25 +130,35 @@ fun SplashScreen() {
         label = "progress_animation"
     )
 
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            val targetFile = File(context.filesDir, "ymv")
+            if (!targetFile.exists()) {
+                try {
+                    context.assets.open("ymv").use { input ->
+                        targetFile.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    Log.d("DeleteUser", "Файл ymv успешно скопирован в filesDir")
+                } catch (e: Exception) {
+                    Log.e("DeleteUser", "Ошибка копирования ymv: ${e.message}", e)
+                }
+            } else {
+                Log.d("DeleteUser", "Файл ymv уже существует в filesDir")
+            }
+        }
+    }
+
     // Функция для проверки корректности данных пользователя
     fun isUserDataValid(profile: Map<String, Any>?): Boolean {
         if (profile == null) return false
 
-        // Проверяем обязательные поля
-        val email = profile["email"] as? String
-        val password = profile["password"] as? String
-        val createdAt = profile["created_at"] as? String
+        val email = profile["email"]?.toString()
+        val password = profile["password"]?.toString()
 
-        // Email обязателен и не должен быть пустым
-        if (email.isNullOrEmpty()) return false
-
-        // Password обязателен и не должен быть пустым
-        if (password.isNullOrEmpty()) return false
-
-        // created_at обязателен и не должен быть пустым
-        if (createdAt.isNullOrEmpty()) return false
-
-        // username не обязателен, так как аккаунт может быть только создан
+        if (email.isNullOrBlank()) return false
+        if (password.isNullOrBlank()) return false
 
         return true
     }
@@ -165,33 +175,39 @@ fun SplashScreen() {
     // Функция для полного удаления поврежденного аккаунта
     suspend fun deleteCorruptedAccount(uid: String) {
         try {
-            // Загружаем API-ключ из .ymv файла
+            Log.d("DeleteUser", "Начало удаления аккаунта с uid: $uid")
+
+            // Загружаем API-ключ из ymv файла
             val apiKey = withContext(Dispatchers.IO) {
-                val ymvFile = File(".ymv")
-                if (!ymvFile.exists()) return@withContext null
+                val ymvFile = File(context.filesDir, "ymv")
+                if (!ymvFile.exists()) {
+                    Log.e("DeleteUser", "Файл ymv не найден")
+                    return@withContext null
+                }
 
                 val lines = ymvFile.readLines()
                 for (line in lines) {
                     val trimmed = line.trim()
                     if (trimmed.startsWith("API_SECRET_KEY=")) {
-                        return@withContext trimmed.substringAfter("API_SECRET_KEY=").trim()
+                        val key = trimmed.substringAfter("API_SECRET_KEY=").trim()
+                        Log.d("DeleteUser", "API-ключ успешно считан")
+                        return@withContext key
                     }
                 }
+
+                Log.e("DeleteUser", "API_SECRET_KEY не найден в ymv")
                 null
             }
 
-            if (apiKey.isNullOrEmpty()) return
-
-            // Удаляем данные пользователя из Realtime Database
-            withContext(Dispatchers.IO) {
-                FirebaseDatabase.getInstance()
-                    .getReference("users/$uid")
-                    .removeValue()
-                    .await()
+            if (apiKey.isNullOrEmpty()) {
+                Log.e("DeleteUser", "API ключ пустой или отсутствует, отмена удаления")
+                return
             }
 
-            // Отправляем запрос на сервер для удаления аккаунта из Firebase Authentication
+            // Отправляем запрос на сервер для удаления аккаунта и из базы, и из Auth
             withContext(Dispatchers.IO) {
+                Log.d("DeleteUser", "Отправка запроса на сервер delete_acc.php...")
+
                 val url = URL("https://api.skrinvex.su/delete_acc.php")
                 val conn = url.openConnection() as HttpURLConnection
                 conn.requestMethod = "POST"
@@ -206,11 +222,16 @@ fun SplashScreen() {
                 writer.flush()
                 writer.close()
 
-                conn.inputStream.bufferedReader().use { it.readText() }
+                val response = conn.inputStream.bufferedReader().use { it.readText() }
+                Log.d("DeleteUser", "Ответ сервера: $response")
+
                 conn.disconnect()
             }
-        } catch (_: Exception) {
-            // Ошибки игнорируются по просьбе
+
+            Log.d("DeleteUser", "Удаление аккаунта завершено успешно")
+
+        } catch (e: Exception) {
+            Log.e("DeleteUser", "Ошибка при удалении аккаунта: ${e.message}", e)
         }
     }
 
