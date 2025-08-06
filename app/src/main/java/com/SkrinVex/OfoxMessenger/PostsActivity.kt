@@ -10,6 +10,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -32,7 +34,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -81,11 +85,23 @@ class PostsActivity : ComponentActivity() {
 fun PostsScreen(viewModel: PostsViewModel) {
     val context = LocalContext.current
     val state by viewModel.state.collectAsState()
-    var selectedTab by remember { mutableStateOf("all") } // "all" или "subscriptions"
+    var selectedTab by remember { mutableStateOf("all") } // "all" или "friends"
     var showCreatePostDialog by remember { mutableStateOf(false) }
     var createPostState by remember { mutableStateOf(CreatePostState()) }
+    var searchQuery by remember { mutableStateOf("") }
+    var isSearchActive by remember { mutableStateOf(false) }
 
-    // Определяем pickImages перед использованием
+    // Анимация для поисковой строки
+    val searchBarAlpha by animateFloatAsState(
+        targetValue = if (isSearchActive) 1f else 0f,
+        animationSpec = tween(durationMillis = 300)
+    )
+    val searchBarScale by animateFloatAsState(
+        targetValue = if (isSearchActive) 1f else 0.8f,
+        animationSpec = tween(durationMillis = 300)
+    )
+
+    // Лаунчер для выбора изображений
     val pickImages = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris: List<Uri>? ->
         if (uris != null && uris.size <= 5) {
             createPostState = createPostState.copy(imageUris = uris)
@@ -115,7 +131,6 @@ fun PostsScreen(viewModel: PostsViewModel) {
                             isUploading = false,
                             errorMessage = message
                         )
-                        // Toast.makeText(context, message, Toast.LENGTH_SHORT).show() // Можно убрать, если не нужен тост
                     }
                 }
             },
@@ -126,7 +141,7 @@ fun PostsScreen(viewModel: PostsViewModel) {
         )
     }
 
-    // Сохраняем состояние прокрутки
+    // Состояние прокрутки
     val lazyListState = rememberLazyListState()
 
     Scaffold(
@@ -145,63 +160,142 @@ fun PostsScreen(viewModel: PostsViewModel) {
                     modifier = Modifier.size(24.dp)
                 )
             }
+        },
+        topBar = {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .windowInsetsPadding(WindowInsets.statusBars) // Отступ от статус-бара
+                    .background(Color(0xFF101010))
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (isSearchActive) {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = { Text("Поиск постов...", color = Color.Gray, fontSize = 14.sp) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .alpha(searchBarAlpha)
+                            .scale(searchBarScale)
+                            .clip(RoundedCornerShape(24.dp))
+                            .background(Color(0xFF2A2A2A), RoundedCornerShape(24.dp)),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedTextColor = Color.White,
+                            unfocusedTextColor = Color.White,
+                            focusedBorderColor = Color(0xFFFF6B35),
+                            unfocusedBorderColor = Color(0xFF333333),
+                            cursorColor = Color(0xFFFF6B35)
+                        ),
+                        textStyle = MaterialTheme.typography.bodyMedium,
+                        singleLine = true,
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Rounded.Search,
+                                contentDescription = "Поиск",
+                                tint = Color.White
+                            )
+                        },
+                        trailingIcon = {
+                            if (searchQuery.isNotEmpty()) {
+                                IconButton(onClick = { searchQuery = "" }) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Clear,
+                                        contentDescription = "Очистить",
+                                        tint = Color.White
+                                    )
+                                }
+                            }
+                        }
+                    )
+                } else {
+                    Text(
+                        text = "Лента",
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+                IconButton(
+                    onClick = { isSearchActive = !isSearchActive },
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF2A2A2A))
+                ) {
+                    Icon(
+                        imageVector = if (isSearchActive) Icons.Rounded.Close else Icons.Rounded.Search,
+                        contentDescription = if (isSearchActive) "Закрыть поиск" else "Открыть поиск",
+                        tint = Color(0xFFFF6B35)
+                    )
+                }
+            }
         }
     ) { paddingValues ->
-        // Показываем спиннер только при первоначальной загрузке
         if (state.isLoading && state.posts.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = Color(0xFFFF6B35))
             }
         } else {
-            LazyColumn(
-                state = lazyListState, // Сохраняем позицию прокрутки
+            Column(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(paddingValues),
-                contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(16.dp)
+                    .padding(paddingValues)
             ) {
-                item {
-                    ModernToggle(
-                        selectedTab = selectedTab,
-                        onTabSelected = { tab ->
-                            selectedTab = tab
-                            if (tab == "subscriptions") {
-                                DialogController.showComingSoonDialog()
-                            }
-                        },
-                        hasNotifications = false,
-                        tab1Text = "Общая лента",
-                        tab1Value = "all",
-                        tab2Text = "Подписки",
-                        tab2Value = "subscriptions"
-                    )
-                }
-
-                val filteredPosts = if (selectedTab == "all") {
-                    state.posts
-                } else {
-                    state.posts.filter { state.friends.contains(it.user_id) }
-                }
-
-                if (filteredPosts.isNotEmpty()) {
-                    items(
-                        items = filteredPosts,
-                        key = { post -> post.id ?: "" } // Ключи для эффективного обновления
-                    ) { post ->
-                        PostCard(
-                            post = post,
-                            currentUid = (context as? PostsActivity)?.intent?.getStringExtra("uid") ?: "",
-                            viewModel = viewModel
+                LazyColumn(
+                    state = lazyListState,
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    item {
+                        ModernToggle(
+                            selectedTab = selectedTab,
+                            onTabSelected = { tab ->
+                                selectedTab = tab
+                            },
+                            hasNotifications = false,
+                            tab1Text = "Общая лента",
+                            tab1Value = "all",
+                            tab2Text = "Друзья",
+                            tab2Value = "friends"
                         )
                     }
-                } else {
-                    item {
-                        Text(
-                            text = if (selectedTab == "all") "Нет постов" else "Нет постов от подписок",
-                            color = Color.White,
-                            modifier = Modifier.padding(16.dp)
-                        )
+
+                    val filteredPosts = if (selectedTab == "all") {
+                        state.posts.filter { post ->
+                            post.title.contains(searchQuery, ignoreCase = true) ||
+                                    post.content.contains(searchQuery, ignoreCase = true)
+                        }
+                    } else {
+                        state.posts.filter { post ->
+                            state.friends.contains(post.user_id) &&
+                                    (post.title.contains(searchQuery, ignoreCase = true) ||
+                                            post.content.contains(searchQuery, ignoreCase = true))
+                        }
+                    }
+
+                    if (filteredPosts.isNotEmpty()) {
+                        items(
+                            items = filteredPosts,
+                            key = { post -> post.id ?: "" }
+                        ) { post ->
+                            PostCard(
+                                post = post,
+                                currentUid = (context as? PostsActivity)?.intent?.getStringExtra("uid") ?: "",
+                                viewModel = viewModel
+                            )
+                        }
+                    } else {
+                        item {
+                            Text(
+                                text = if (selectedTab == "all") "Нет постов" else "Нет постов от друзей",
+                                color = Color.White,
+                                modifier = Modifier.padding(16.dp)
+                            )
+                        }
                     }
                 }
             }
