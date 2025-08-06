@@ -372,7 +372,7 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                     } else {
                         val errorMsg = response.body()?.error ?: "Unknown error"
                         Log.e(TAG, "Image upload failed: $errorMsg, Code: ${response.code()}")
-                        return@launch onComplete(false, "Ошибка загрузки изображения: $errorMsg")
+                        return@launch onComplete(false, errorMsg) // Передаём ошибку из PHP-скрипта, например "Обнаружен запрещённый контент"
                     }
                 }
 
@@ -387,11 +387,10 @@ class PostsViewModel(private val uid: String) : ViewModel() {
 
                 Log.d(TAG, "Saving post to Firebase: $postId")
                 FirebaseDatabase.getInstance()
-                    .getReference("posts/$postId")
+                    .getReference("posts/$$postId")
                     .setValue(post)
                     .await()
 
-                // Добавляем новый пост в состояние
                 val userSnapshot = withContext(Dispatchers.IO) {
                     FirebaseDatabase.getInstance()
                         .getReference("users/$uid")
@@ -428,7 +427,7 @@ class PostsViewModel(private val uid: String) : ViewModel() {
     fun editPost(postId: String, title: String?, content: String?, newImageUris: List<Uri>, existingImageUrls: List<String>, context: Context, onComplete: (Boolean, String) -> Unit) {
         viewModelScope.launch {
             try {
-                Log.d(TAG, "Editing post: $postId, title: $title, content: $content, newImageUris: ${newImageUris.size}, existingImageUrls: ${existingImageUrls.size}")
+                Log.d(TAG, "Editing, title: $title, content: $content, newImageUris: ${newImageUris.size}, existingImageUrls: ${existingImageUrls.size}")
                 if (newImageUris.size + existingImageUrls.size > 5) {
                     return@launch onComplete(false, "Максимум 5 изображений")
                 }
@@ -457,7 +456,7 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                     } else {
                         val errorMsg = response.body()?.error ?: "Unknown error"
                         Log.e(TAG, "Image upload failed: $errorMsg, Code: ${response.code()}")
-                        return@launch onComplete(false, "Ошибка загрузки изображения: $errorMsg")
+                        return@launch onComplete(false, errorMsg) // Передаём ошибку из PHP-скрипта
                     }
                 }
                 if (imageUrls.isNotEmpty()) {
@@ -473,7 +472,6 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                         .updateChildren(updates)
                         .await()
 
-                    // Обновляем пост в состоянии
                     val updatedPosts = _state.value.posts.map { post ->
                         if (post.id == postId) {
                             post.copy(

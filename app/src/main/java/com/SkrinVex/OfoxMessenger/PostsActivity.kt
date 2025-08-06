@@ -85,12 +85,45 @@ fun PostsScreen(viewModel: PostsViewModel) {
     var showCreatePostDialog by remember { mutableStateOf(false) }
     var createPostState by remember { mutableStateOf(CreatePostState()) }
 
+    // Определяем pickImages перед использованием
     val pickImages = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris: List<Uri>? ->
         if (uris != null && uris.size <= 5) {
             createPostState = createPostState.copy(imageUris = uris)
         } else if (uris != null) {
             Toast.makeText(context, "Максимум 5 изображений", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    if (showCreatePostDialog) {
+        CreatePostDialog(
+            state = createPostState,
+            onStateChange = { createPostState = it },
+            onPickImages = { pickImages.launch("image/*") },
+            onCreatePost = {
+                viewModel.createPost(
+                    title = createPostState.title,
+                    content = createPostState.content,
+                    imageUris = createPostState.imageUris,
+                    context = context
+                ) { success, message ->
+                    if (success) {
+                        createPostState = CreatePostState()
+                        showCreatePostDialog = false
+                        Toast.makeText(context, "Пост создан успешно", Toast.LENGTH_SHORT).show()
+                    } else {
+                        createPostState = createPostState.copy(
+                            isUploading = false,
+                            errorMessage = message
+                        )
+                        // Toast.makeText(context, message, Toast.LENGTH_SHORT).show() // Можно убрать, если не нужен тост
+                    }
+                }
+            },
+            onDismiss = {
+                createPostState = CreatePostState()
+                showCreatePostDialog = false
+            }
+        )
     }
 
     // Сохраняем состояние прокрутки
@@ -174,32 +207,6 @@ fun PostsScreen(viewModel: PostsViewModel) {
             }
         }
     }
-
-    if (showCreatePostDialog) {
-        CreatePostDialog(
-            state = createPostState,
-            onStateChange = { createPostState = it },
-            onPickImages = { pickImages.launch("image/*") },
-            onCreatePost = {
-                viewModel.createPost(
-                    title = createPostState.title,
-                    content = createPostState.content,
-                    imageUris = createPostState.imageUris,
-                    context = context
-                ) { success, message ->
-                    Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
-                    if (success) {
-                        createPostState = CreatePostState()
-                        showCreatePostDialog = false
-                    }
-                }
-            },
-            onDismiss = {
-                createPostState = CreatePostState()
-                showCreatePostDialog = false
-            }
-        )
-    }
 }
 
 data class CreatePostState(
@@ -207,7 +214,8 @@ data class CreatePostState(
     val content: String = "",
     val imageUris: List<Uri> = emptyList(),
     val existingImageUrls: List<String> = emptyList(),
-    val isUploading: Boolean = false
+    val isUploading: Boolean = false,
+    val errorMessage: String? = null // Добавлено для ошибок
 )
 
 @Composable
@@ -237,7 +245,7 @@ fun CreatePostDialog(
                 )
                 OutlinedTextField(
                     value = state.title,
-                    onValueChange = { onStateChange(state.copy(title = it)) },
+                    onValueChange = { onStateChange(state.copy(title = it, errorMessage = null)) },
                     label = { Text("Заголовок", color = Color.White) },
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(
@@ -249,7 +257,7 @@ fun CreatePostDialog(
                 )
                 OutlinedTextField(
                     value = state.content,
-                    onValueChange = { onStateChange(state.copy(content = it)) },
+                    onValueChange = { onStateChange(state.copy(content = it, errorMessage = null)) },
                     label = { Text("Описание", color = Color.White) },
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(
@@ -281,7 +289,7 @@ fun CreatePostDialog(
                                     .size(100.dp)
                                     .clip(RoundedCornerShape(8.dp))
                                     .clickable {
-                                        onStateChange(state.copy(imageUris = state.imageUris.filterIndexed { i, _ -> i != index }))
+                                        onStateChange(state.copy(imageUris = state.imageUris.filterIndexed { i, _ -> i != index }, errorMessage = null))
                                     }
                             ) {
                                 AsyncImage(
@@ -304,6 +312,14 @@ fun CreatePostDialog(
                         }
                     }
                 }
+                if (state.errorMessage != null) {
+                    Text(
+                        text = state.errorMessage,
+                        color = Color.Red,
+                        fontSize = 14.sp,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
@@ -321,7 +337,7 @@ fun CreatePostDialog(
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = {
-                            onStateChange(state.copy(isUploading = true))
+                            onStateChange(state.copy(isUploading = true, errorMessage = null))
                             onCreatePost()
                         },
                         enabled = state.title.isNotBlank() && state.content.isNotBlank() && !state.isUploading,
@@ -373,7 +389,7 @@ fun EditPostDialog(
                 )
                 OutlinedTextField(
                     value = state.title,
-                    onValueChange = { onStateChange(state.copy(title = it)) },
+                    onValueChange = { onStateChange(state.copy(title = it, errorMessage = null)) },
                     label = { Text("Заголовок", color = Color.White) },
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(
@@ -385,7 +401,7 @@ fun EditPostDialog(
                 )
                 OutlinedTextField(
                     value = state.content,
-                    onValueChange = { onStateChange(state.copy(content = it)) },
+                    onValueChange = { onStateChange(state.copy(content = it, errorMessage = null)) },
                     label = { Text("Описание", color = Color.White) },
                     modifier = Modifier.fillMaxWidth(),
                     colors = OutlinedTextFieldDefaults.colors(
@@ -404,20 +420,20 @@ fun EditPostDialog(
                 ) {
                     Text("Добавить изображения (макс. 5)", fontSize = 14.sp)
                 }
-                if (state.imageUris.isNotEmpty() || post.image_urls?.isNotEmpty() == true) {
+                if (state.imageUris.isNotEmpty() || state.existingImageUrls.isNotEmpty()) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .horizontalScroll(rememberScrollState()),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        post.image_urls?.forEachIndexed { index, url ->
+                        state.existingImageUrls.forEachIndexed { index, url ->
                             Box(
                                 modifier = Modifier
                                     .size(100.dp)
                                     .clip(RoundedCornerShape(8.dp))
                                     .clickable {
-                                        onStateChange(state.copy(existingImageUrls = state.existingImageUrls.filterIndexed { i, _ -> i != index }))
+                                        onStateChange(state.copy(existingImageUrls = state.existingImageUrls.filterIndexed { i, _ -> i != index }, errorMessage = null))
                                     }
                             ) {
                                 AsyncImage(
@@ -444,7 +460,7 @@ fun EditPostDialog(
                                     .size(100.dp)
                                     .clip(RoundedCornerShape(8.dp))
                                     .clickable {
-                                        onStateChange(state.copy(imageUris = state.imageUris.filterIndexed { i, _ -> i != index }))
+                                        onStateChange(state.copy(imageUris = state.imageUris.filterIndexed { i, _ -> i != index }, errorMessage = null))
                                     }
                             ) {
                                 AsyncImage(
@@ -467,6 +483,14 @@ fun EditPostDialog(
                         }
                     }
                 }
+                if (state.errorMessage != null) {
+                    Text(
+                        text = state.errorMessage,
+                        color = Color.Red,
+                        fontSize = 14.sp,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
                 Row(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.SpaceBetween
@@ -484,7 +508,7 @@ fun EditPostDialog(
                     Spacer(modifier = Modifier.width(8.dp))
                     Button(
                         onClick = {
-                            onStateChange(state.copy(isUploading = true))
+                            onStateChange(state.copy(isUploading = true, errorMessage = null))
                             onEditPost()
                         },
                         enabled = (state.title.isNotBlank() || state.content.isNotBlank() || state.imageUris.isNotEmpty() || state.existingImageUrls.isNotEmpty()) && !state.isUploading,
@@ -645,6 +669,60 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
                 imageUris = emptyList(),
                 existingImageUrls = post.image_urls ?: emptyList()
             )
+        )
+    }
+
+    if (showEditDialog) {
+        val pickImages = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris: List<Uri>? ->
+            if (uris != null && uris.size + editPostState.existingImageUrls.size <= 5) {
+                editPostState = editPostState.copy(imageUris = uris)
+            } else if (uris != null) {
+                Toast.makeText(context, "Максимум 5 изображений", Toast.LENGTH_SHORT).show()
+            }
+        }
+        EditPostDialog(
+            post = post,
+            state = editPostState,
+            onStateChange = { editPostState = it },
+            onPickImages = { pickImages.launch("image/*") },
+            onEditPost = {
+                post.id?.let { postId ->
+                    viewModel.editPost(
+                        postId = postId,
+                        title = editPostState.title.takeIf { it.isNotBlank() },
+                        content = editPostState.content.takeIf { it.isNotBlank() },
+                        newImageUris = editPostState.imageUris,
+                        existingImageUrls = editPostState.existingImageUrls,
+                        context = context
+                    ) { success, message ->
+                        if (success) {
+                            editPostState = CreatePostState(
+                                title = post.title,
+                                content = post.content,
+                                imageUris = emptyList(),
+                                existingImageUrls = post.image_urls ?: emptyList()
+                            )
+                            showEditDialog = false
+                            Toast.makeText(context, "Пост изменён успешно", Toast.LENGTH_SHORT).show()
+                        } else {
+                            editPostState = editPostState.copy(
+                                isUploading = false,
+                                errorMessage = message
+                            )
+                            // Toast.makeText(context, message, Toast.LENGTH_SHORT).show() // Можно убрать
+                        }
+                    }
+                }
+            },
+            onDismiss = {
+                editPostState = CreatePostState(
+                    title = post.title,
+                    content = post.content,
+                    imageUris = emptyList(),
+                    existingImageUrls = post.image_urls ?: emptyList()
+                )
+                showEditDialog = false
+            }
         )
     }
 
