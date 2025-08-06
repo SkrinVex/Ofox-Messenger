@@ -19,6 +19,7 @@ import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
@@ -92,6 +93,9 @@ fun PostsScreen(viewModel: PostsViewModel) {
         }
     }
 
+    // Сохраняем состояние прокрутки
+    val lazyListState = rememberLazyListState()
+
     Scaffold(
         containerColor = Color(0xFF101010),
         floatingActionButton = {
@@ -110,12 +114,14 @@ fun PostsScreen(viewModel: PostsViewModel) {
             }
         }
     ) { paddingValues ->
-        if (state.isLoading) {
+        // Показываем спиннер только при первоначальной загрузке
+        if (state.isLoading && state.posts.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 CircularProgressIndicator(color = Color(0xFFFF6B35))
             }
-        } else if (state.posts.isNotEmpty() || selectedTab == "subscriptions") {
+        } else {
             LazyColumn(
+                state = lazyListState, // Сохраняем позицию прокрутки
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(paddingValues),
@@ -146,7 +152,10 @@ fun PostsScreen(viewModel: PostsViewModel) {
                 }
 
                 if (filteredPosts.isNotEmpty()) {
-                    items(filteredPosts) { post ->
+                    items(
+                        items = filteredPosts,
+                        key = { post -> post.id ?: "" } // Ключи для эффективного обновления
+                    ) { post ->
                         PostCard(
                             post = post,
                             currentUid = (context as? PostsActivity)?.intent?.getStringExtra("uid") ?: "",
@@ -162,10 +171,6 @@ fun PostsScreen(viewModel: PostsViewModel) {
                         )
                     }
                 }
-            }
-        } else {
-            Box(Modifier.fillMaxSize().padding(16.dp), contentAlignment = Alignment.Center) {
-                Text(text = state.error ?: "Нет постов", color = Color.White)
             }
         }
     }
@@ -541,7 +546,8 @@ fun ReactionButtons(
     userReaction: String?,
     likesCount: Int,
     dislikesCount: Int,
-    viewModel: PostsViewModel
+    viewModel: PostsViewModel,
+    isLoading: Boolean // Добавлено состояние загрузки
 ) {
     Row(
         modifier = Modifier
@@ -558,20 +564,28 @@ fun ReactionButtons(
                     color = if (userReaction == "like") Color(0xFFFF6B35).copy(alpha = 0.2f) else Color.Transparent,
                     shape = CircleShape
                 ),
-            enabled = true // Реакции разрешены для всех постов
+            enabled = !isLoading // Отключаем кнопку во время загрузки
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Rounded.ThumbUp,
-                    contentDescription = "Like",
-                    tint = if (userReaction == "like") Color(0xFFFF6B35) else Color.White
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = likesCount.toString(),
-                    color = Color.White,
-                    fontSize = 14.sp
-                )
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = Color(0xFFFF6B35),
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Rounded.ThumbUp,
+                        contentDescription = "Like",
+                        tint = if (userReaction == "like") Color(0xFFFF6B35) else Color.White
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = likesCount.toString(),
+                        color = Color.White,
+                        fontSize = 14.sp
+                    )
+                }
             }
         }
 
@@ -584,20 +598,28 @@ fun ReactionButtons(
                     color = if (userReaction == "dislike") Color(0xFFFF6B35).copy(alpha = 0.2f) else Color.Transparent,
                     shape = CircleShape
                 ),
-            enabled = true // Реакции разрешены для всех постов
+            enabled = !isLoading // Отключаем кнопку во время загрузки
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Rounded.ThumbDown,
-                    contentDescription = "Dislike",
-                    tint = if (userReaction == "dislike") Color(0xFFFF6B35) else Color.White
-                )
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(
-                    text = dislikesCount.toString(),
-                    color = Color.White,
-                    fontSize = 14.sp
-                )
+                if (isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = Color(0xFFFF6B35),
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Icon(
+                        imageVector = Icons.Rounded.ThumbDown,
+                        contentDescription = "Dislike",
+                        tint = if (userReaction == "dislike") Color(0xFFFF6B35) else Color.White
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = dislikesCount.toString(),
+                        color = Color.White,
+                        fontSize = 14.sp
+                    )
+                }
             }
         }
     }
@@ -612,8 +634,9 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
     var showEditDialog by remember { mutableStateOf(false) }
     var showDeleteDialog by remember { mutableStateOf(false) }
     var showCommentsSheet by remember { mutableStateOf(false) }
-    var likesCount by remember { mutableStateOf(0) }
-    var dislikesCount by remember { mutableStateOf(0) }
+    var likesCount by remember { mutableStateOf(post.likes.count { it.value == "like" }) }
+    var dislikesCount by remember { mutableStateOf(post.likes.count { it.value == "dislike" }) }
+    var isReactionLoading by remember { mutableStateOf(false) } // Локальная загрузка реакции
     var editPostState by remember {
         mutableStateOf(
             CreatePostState(
@@ -625,14 +648,10 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
         )
     }
 
-    // Load reaction counts
-    LaunchedEffect(post.id) {
-        post.id?.let { postId ->
-            viewModel.getReactionCounts(postId) { likes, dislikes ->
-                likesCount = likes
-                dislikesCount = dislikes
-            }
-        }
+    // Обновляем количество реакций при изменении поста
+    LaunchedEffect(post.likes) {
+        likesCount = post.likes.count { it.value == "like" }
+        dislikesCount = post.likes.count { it.value == "dislike" }
     }
 
     // Detect links and compatible apps
@@ -781,7 +800,7 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            // Add reaction buttons
+            // Реакции с локальным спиннером
             post.id?.let { postId ->
                 ReactionButtons(
                     postId = postId,
@@ -789,7 +808,8 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
                     userReaction = post.userReaction,
                     likesCount = likesCount,
                     dislikesCount = dislikesCount,
-                    viewModel = viewModel
+                    viewModel = viewModel,
+                    isLoading = isReactionLoading
                 )
             }
 
@@ -1116,7 +1136,6 @@ fun CommentsBottomSheet(
         }
     }
 
-    // ——— BottomSheet действий с комментарием ———
     showActionsSheet?.let { comment ->
         CommentActionsBottomSheet(
             comment = comment,
@@ -1162,7 +1181,6 @@ fun CommentItem(
             modifier = Modifier.padding(12.dp),
             verticalAlignment = Alignment.Top
         ) {
-            // --- Аватар с переходом ---
             AsyncImage(
                 model = comment.profile_photo?.takeIf { it.isNotBlank() }?.let { "https://api.skrinvex.su$it" },
                 contentDescription = "Аватар комментатора",
@@ -1175,7 +1193,6 @@ fun CommentItem(
             )
             Spacer(modifier = Modifier.width(8.dp))
             Column {
-                // --- Ник с переходом ---
                 Text(
                     text = comment.nickname ?: comment.username ?: "Пользователь",
                     color = Color.White,

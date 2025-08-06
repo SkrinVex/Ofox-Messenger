@@ -51,7 +51,7 @@ data class PostItem(
     val created_at: String,
     val is_edited: Boolean = false,
     val comments: List<CommentItem> = emptyList(),
-    val likes: Map<String, String?> = emptyMap(), // Изменено на Map<String, String?>
+    val likes: Map<String, String?> = emptyMap(),
     val userReaction: String? = null
 )
 
@@ -83,7 +83,6 @@ class PostsViewModel(private val uid: String) : ViewModel() {
             _state.value = PostsState(isLoading = true)
             try {
                 Log.d(TAG, "Loading posts data for user: $uid")
-                // Загружаем друзей
                 val friendsSnapshot = withContext(Dispatchers.IO) {
                     FirebaseDatabase.getInstance()
                         .getReference("users/$uid/friends")
@@ -94,7 +93,6 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                     .filter { it.child("is_friend").getValue(Boolean::class.java) == true }
                     .mapNotNull { it.key }
 
-                // Загружаем посты
                 val postsSnapshot = withContext(Dispatchers.IO) {
                     FirebaseDatabase.getInstance()
                         .getReference("posts")
@@ -113,37 +111,33 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                         }
                         val userData = userSnapshot.value as? Map<String, Any>
                         val imageUrls = (map["image_urls"] as? List<*>)?.mapNotNull { it as? String }
-                        val comments = mutableListOf<CommentItem>()
                         val commentsSnapshot = withContext(Dispatchers.IO) {
                             FirebaseDatabase.getInstance()
                                 .getReference("posts/${child.key}/comments")
                                 .get()
                                 .await()
                         }
-                        commentsSnapshot.children.forEach { commentChild ->
+                        val comments = commentsSnapshot.children.mapNotNull { commentChild ->
                             val commentMap = commentChild.value as? Map<String, Any>
-                            if (commentMap != null) {
+                            commentMap?.let {
                                 val commentUserSnapshot = withContext(Dispatchers.IO) {
                                     FirebaseDatabase.getInstance()
-                                        .getReference("users/${commentMap["user_id"]}")
+                                        .getReference("users/${it["user_id"]}")
                                         .get()
                                         .await()
                                 }
                                 val commentUserData = commentUserSnapshot.value as? Map<String, Any>
-                                comments.add(
-                                    CommentItem(
-                                        id = commentChild.key ?: "",
-                                        user_id = commentMap["user_id"] as? String ?: "",
-                                        username = commentUserData?.get("username") as? String,
-                                        nickname = commentUserData?.get("nickname") as? String,
-                                        profile_photo = commentUserData?.get("profile_photo") as? String,
-                                        content = commentMap["content"] as? String ?: "",
-                                        created_at = commentMap["created_at"] as? String ?: ""
-                                    )
+                                CommentItem(
+                                    id = commentChild.key ?: "",
+                                    user_id = it["user_id"] as? String ?: "",
+                                    username = commentUserData?.get("username") as? String,
+                                    nickname = commentUserData?.get("nickname") as? String,
+                                    profile_photo = commentUserData?.get("profile_photo") as? String,
+                                    content = it["content"] as? String ?: "",
+                                    created_at = it["created_at"] as? String ?: ""
                                 )
                             }
                         }
-                        // Загружаем реакции
                         val reactionsSnapshot = withContext(Dispatchers.IO) {
                             FirebaseDatabase.getInstance()
                                 .getReference("posts/${child.key}/reactions")
@@ -214,18 +208,43 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                 val currentReaction = snapshot.getValue(String::class.java)
 
                 val newReaction = when {
-                    currentReaction == reactionType -> null // Удаляем реакцию, если выбрана та же
-                    else -> reactionType // Устанавливаем новую реакцию
+                    currentReaction == reactionType -> null // Удаляем реакцию
+                    else -> reactionType // Устанавливаем новую
                 }
 
-                // Обновляем реакцию в Firebase
                 dbRef.setValue(newReaction).await()
                 Log.d("ReactionUpdate", "Reaction updated: $postId, user: $userId, type: $newReaction")
 
-                // Обновляем локальное состояние
-                loadPostsData()
+                // Обновляем только этот пост
+                updatePostReactions(postId)
             } catch (e: Exception) {
                 Log.e("ReactionError", "Error updating reaction: ${e.message}", e)
+            }
+        }
+    }
+
+    private fun updatePostReactions(postId: String) {
+        viewModelScope.launch {
+            try {
+                val reactionsSnapshot = withContext(Dispatchers.IO) {
+                    FirebaseDatabase.getInstance()
+                        .getReference("posts/$postId/reactions")
+                        .get()
+                        .await()
+                }
+                val reactions = reactionsSnapshot.children.associate { it.key!! to it.getValue(String::class.java) }
+                val userReaction = reactions[uid]
+
+                val updatedPosts = _state.value.posts.map { post ->
+                    if (post.id == postId) {
+                        post.copy(likes = reactions, userReaction = userReaction)
+                    } else {
+                        post
+                    }
+                }
+                _state.value = _state.value.copy(posts = updatedPosts)
+            } catch (e: Exception) {
+                Log.e(TAG, "Error updating reactions: ${e.message}", e)
             }
         }
     }
@@ -246,7 +265,6 @@ class PostsViewModel(private val uid: String) : ViewModel() {
         }
     }
 
-    // Function to detect links in content and find compatible apps
     fun detectLinksAndApps(content: String, context: Context): Pair<List<String>, List<List<Pair<ResolveInfo, String>>>> {
         val urlPattern = Pattern.compile(
             "(https?://[\\w\\-\\.]+(:\\d+)?(/[\\w\\-\\.]*)*(\\?[\\w\\-\\.=&%]*)?(#[\\w\\-]*)?)",
@@ -255,9 +273,7 @@ class PostsViewModel(private val uid: String) : ViewModel() {
         val matcher = urlPattern.matcher(content)
         val links = mutableListOf<String>()
         val appsPerLink = mutableListOf<List<Pair<ResolveInfo, String>>>()
-        val TAG = "PostsActivityDebug"
 
-        // Список популярных приложений с их схемами и доменами
         val appSchemes = mapOf(
             "org.telegram.messenger" to listOf("tg", "https://t.me", "https://telegram.me"),
             "com.google.android.youtube" to listOf("youtube", "https://www.youtube.com", "https://youtu.be"),
@@ -277,14 +293,12 @@ class PostsViewModel(private val uid: String) : ViewModel() {
             val scheme = uri.scheme?.lowercase() ?: ""
             val host = uri.host?.lowercase() ?: ""
 
-            // Собираем приложения, которые могут обработать ссылку
             val appsWithLabels = mutableListOf<Pair<ResolveInfo, String>>()
 
-            // Проверяем кастомные схемы и домены для каждого приложения
             appSchemes.forEach { (packageName, schemes) ->
                 val intent = Intent(Intent.ACTION_VIEW, uri).apply {
                     addCategory(Intent.CATEGORY_DEFAULT)
-                    setPackage(packageName) // Ограничиваем конкретным пакетом
+                    setPackage(packageName)
                 }
                 val resolveInfo = context.packageManager.queryIntentActivities(intent, PackageManager.MATCH_ALL)
                 if (resolveInfo.isNotEmpty()) {
@@ -292,7 +306,7 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                         if (scheme.startsWith("http")) {
                             url.contains(scheme, ignoreCase = true)
                         } else {
-                            scheme == uri.scheme // Исправлено: используем uri.scheme вместо this.scheme
+                            scheme == uri.scheme
                         }
                     }
                     if (matchesScheme) {
@@ -305,7 +319,6 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                 }
             }
 
-            // Если нет подходящих приложений, проверяем стандартный Intent для HTTP/HTTPS
             if (appsWithLabels.isEmpty() && (scheme == "http" || scheme == "https")) {
                 val genericIntent = Intent(Intent.ACTION_VIEW, uri).apply {
                     addCategory(Intent.CATEGORY_DEFAULT)
@@ -313,7 +326,6 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                 val genericApps = context.packageManager.queryIntentActivities(genericIntent, PackageManager.MATCH_ALL)
                 genericApps.forEach { resolve ->
                     val packageName = resolve.activityInfo.packageName
-                    // Исключаем браузеры, если есть специфичные приложения
                     if (!appSchemes.containsKey(packageName)) {
                         val label = resolve.loadLabel(context.packageManager).toString()
                         appsWithLabels.add(Pair(resolve, label))
@@ -322,7 +334,6 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                 }
             }
 
-            // Удаляем дубликаты
             val uniqueApps = appsWithLabels.distinctBy { it.first.activityInfo.packageName }
             appsPerLink.add(uniqueApps)
             Log.d(TAG, "Apps for URL $url: ${uniqueApps.map { it.second }}")
@@ -336,14 +347,10 @@ class PostsViewModel(private val uid: String) : ViewModel() {
             try {
                 Log.d(TAG, "Creating post with title: $title, content: $content, imageUris: ${imageUris.size}")
                 if (imageUris.size > 5) {
-                    return@launch onComplete(false, "Максимум 5 изображений").also {
-                        Log.e(TAG, "Too many images selected: ${imageUris.size}")
-                    }
+                    return@launch onComplete(false, "Максимум 5 изображений")
                 }
                 val postId = FirebaseDatabase.getInstance().getReference("posts").push().key
-                    ?: return@launch onComplete(false, "Ошибка создания ID поста").also {
-                        Log.e(TAG, "Failed to generate post ID")
-                    }
+                    ?: return@launch onComplete(false, "Ошибка создания ID поста")
                 val imageUrls = mutableListOf<String>()
 
                 for (uri in imageUris) {
@@ -374,9 +381,7 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                     "title" to title,
                     "content" to content,
                     "image_urls" to if (imageUrls.isNotEmpty()) imageUrls else null,
-                    "created_at" to SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(
-                        Date()
-                    ),
+                    "created_at" to SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date()),
                     "is_edited" to false
                 )
 
@@ -385,6 +390,31 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                     .getReference("posts/$postId")
                     .setValue(post)
                     .await()
+
+                // Добавляем новый пост в состояние
+                val userSnapshot = withContext(Dispatchers.IO) {
+                    FirebaseDatabase.getInstance()
+                        .getReference("users/$uid")
+                        .get()
+                        .await()
+                }
+                val userData = userSnapshot.value as? Map<String, Any>
+                val newPost = PostItem(
+                    id = postId,
+                    user_id = uid,
+                    username = userData?.get("username") as? String,
+                    nickname = userData?.get("nickname") as? String,
+                    profile_photo = userData?.get("profile_photo") as? String,
+                    title = title,
+                    content = content,
+                    image_urls = if (imageUrls.isNotEmpty()) imageUrls else null,
+                    created_at = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date()),
+                    is_edited = false,
+                    comments = emptyList(),
+                    likes = emptyMap(),
+                    userReaction = null
+                )
+                _state.value = _state.value.copy(posts = (_state.value.posts + newPost).sortedByDescending { it.created_at })
 
                 Log.d(TAG, "Post created successfully: $postId")
                 onComplete(true, "Пост создан успешно")
@@ -400,9 +430,7 @@ class PostsViewModel(private val uid: String) : ViewModel() {
             try {
                 Log.d(TAG, "Editing post: $postId, title: $title, content: $content, newImageUris: ${newImageUris.size}, existingImageUrls: ${existingImageUrls.size}")
                 if (newImageUris.size + existingImageUrls.size > 5) {
-                    return@launch onComplete(false, "Максимум 5 изображений").also {
-                        Log.e(TAG, "Too many images: new=${newImageUris.size}, existing=${existingImageUrls.size}")
-                    }
+                    return@launch onComplete(false, "Максимум 5 изображений")
                 }
                 val updates = mutableMapOf<String, Any?>()
                 title?.takeIf { it.isNotBlank() }?.let { updates["title"] = it }
@@ -444,6 +472,22 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                         .getReference("posts/$postId")
                         .updateChildren(updates)
                         .await()
+
+                    // Обновляем пост в состоянии
+                    val updatedPosts = _state.value.posts.map { post ->
+                        if (post.id == postId) {
+                            post.copy(
+                                title = title ?: post.title,
+                                content = content ?: post.content,
+                                image_urls = if (imageUrls.isNotEmpty()) imageUrls else null,
+                                is_edited = true
+                            )
+                        } else {
+                            post
+                        }
+                    }
+                    _state.value = _state.value.copy(posts = updatedPosts)
+
                     Log.d(TAG, "Post updated successfully: $postId")
                     onComplete(true, "Пост изменён успешно")
                 } else {
@@ -465,6 +509,11 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                     .getReference("posts/$postId")
                     .removeValue()
                     .await()
+
+                // Удаляем пост из состояния
+                val updatedPosts = _state.value.posts.filter { it.id != postId }
+                _state.value = _state.value.copy(posts = updatedPosts)
+
                 Log.d(TAG, "Post deleted successfully: $postId")
                 onComplete(true, "Пост удалён успешно")
             } catch (e: Exception) {
@@ -479,17 +528,43 @@ class PostsViewModel(private val uid: String) : ViewModel() {
             try {
                 val commentId = FirebaseDatabase.getInstance().getReference("posts/$postId/comments").push().key
                     ?: return@launch onComplete(false, "Ошибка создания ID комментария")
+                val createdAt = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date())
                 val comment = mapOf(
                     "user_id" to userId,
                     "content" to content,
-                    "created_at" to SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(
-                        Date()
-                    )
+                    "created_at" to createdAt
                 )
                 FirebaseDatabase.getInstance()
                     .getReference("posts/$postId/comments/$commentId")
                     .setValue(comment)
                     .await()
+
+                // Обновляем пост в состоянии
+                val userSnapshot = withContext(Dispatchers.IO) {
+                    FirebaseDatabase.getInstance()
+                        .getReference("users/$userId")
+                        .get()
+                        .await()
+                }
+                val userData = userSnapshot.value as? Map<String, Any>
+                val newComment = CommentItem(
+                    id = commentId,
+                    user_id = userId,
+                    username = userData?.get("username") as? String,
+                    nickname = userData?.get("nickname") as? String,
+                    profile_photo = userData?.get("profile_photo") as? String,
+                    content = content,
+                    created_at = createdAt
+                )
+                val updatedPosts = _state.value.posts.map { post ->
+                    if (post.id == postId) {
+                        post.copy(comments = post.comments + newComment)
+                    } else {
+                        post
+                    }
+                }
+                _state.value = _state.value.copy(posts = updatedPosts)
+
                 onComplete(true, "Комментарий добавлен успешно")
             } catch (e: Exception) {
                 onComplete(false, "Ошибка добавления комментария: ${e.message}")
@@ -504,6 +579,17 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                     .getReference("posts/$postId/comments/$commentId")
                     .removeValue()
                     .await()
+
+                // Обновляем пост в состоянии
+                val updatedPosts = _state.value.posts.map { post ->
+                    if (post.id == postId) {
+                        post.copy(comments = post.comments.filter { it.id != commentId })
+                    } else {
+                        post
+                    }
+                }
+                _state.value = _state.value.copy(posts = updatedPosts)
+
                 onComplete(true, "Комментарий удалён успешно")
             } catch (e: Exception) {
                 onComplete(false, "Ошибка удаления комментария: ${e.message}")
@@ -517,7 +603,65 @@ class PostsViewModel(private val uid: String) : ViewModel() {
         }
         postsListener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
-                loadPostsData()
+                // Не перезагружаем все данные, а обновляем только изменённые посты
+                viewModelScope.launch {
+                    try {
+                        val currentPosts = _state.value.posts.associateBy { it.id }
+                        val updatedPosts = mutableListOf<PostItem>()
+                        snapshot.children.forEach { child ->
+                            val map = child.value as? Map<String, Any> ?: return@forEach
+                            val postId = child.key ?: return@forEach
+                            val existingPost = currentPosts[postId]
+                            if (existingPost != null) {
+                                val reactionsSnapshot = withContext(Dispatchers.IO) {
+                                    FirebaseDatabase.getInstance()
+                                        .getReference("posts/$postId/reactions")
+                                        .get()
+                                        .await()
+                                }
+                                val reactions = reactionsSnapshot.children.associate { it.key!! to it.getValue(String::class.java) }
+                                val userReaction = reactions[uid]
+                                val commentsSnapshot = withContext(Dispatchers.IO) {
+                                    FirebaseDatabase.getInstance()
+                                        .getReference("posts/$postId/comments")
+                                        .get()
+                                        .await()
+                                }
+                                val comments = commentsSnapshot.children.mapNotNull { commentChild ->
+                                    val commentMap = commentChild.value as? Map<String, Any>
+                                    commentMap?.let {
+                                        val commentUserSnapshot = withContext(Dispatchers.IO) {
+                                            FirebaseDatabase.getInstance()
+                                                .getReference("users/${it["user_id"]}")
+                                                .get()
+                                                .await()
+                                        }
+                                        val commentUserData = commentUserSnapshot.value as? Map<String, Any>
+                                        CommentItem(
+                                            id = commentChild.key ?: "",
+                                            user_id = it["user_id"] as? String ?: "",
+                                            username = commentUserData?.get("username") as? String,
+                                            nickname = commentUserData?.get("nickname") as? String,
+                                            profile_photo = commentUserData?.get("profile_photo") as? String,
+                                            content = it["content"] as? String ?: "",
+                                            created_at = it["created_at"] as? String ?: ""
+                                        )
+                                    }
+                                }
+                                updatedPosts.add(
+                                    existingPost.copy(
+                                        comments = comments,
+                                        likes = reactions,
+                                        userReaction = userReaction
+                                    )
+                                )
+                            }
+                        }
+                        _state.value = _state.value.copy(posts = updatedPosts.sortedByDescending { it.created_at })
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Error in posts listener: ${e.message}", e)
+                    }
+                }
             }
 
             override fun onCancelled(error: DatabaseError) {
@@ -532,7 +676,10 @@ class PostsViewModel(private val uid: String) : ViewModel() {
         }
         friendsListener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
-                loadPostsData()
+                val friendsList = snapshot.children
+                    .filter { it.child("is_friend").getValue(Boolean::class.java) == true }
+                    .mapNotNull { it.key }
+                _state.value = _state.value.copy(friends = friendsList)
             }
 
             override fun onCancelled(error: DatabaseError) {
