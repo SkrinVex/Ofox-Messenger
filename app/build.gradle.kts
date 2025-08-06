@@ -14,8 +14,8 @@ android {
         applicationId = "com.SkrinVex.OfoxMessenger"
         minSdk = 24
         targetSdk = 36
-        versionCode = 25
-        versionName = "1.1"
+        versionCode = 72
+        versionName = "1.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
