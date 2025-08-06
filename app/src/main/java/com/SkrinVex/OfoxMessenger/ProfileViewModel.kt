@@ -21,7 +21,8 @@ data class ProfileViewState(
     val profileData: ProfileCheckResponse? = null,
     val error: String? = null,
     val isOwnProfile: Boolean = true,
-    val isProcessingFriendRequest: Boolean = false
+    val isProcessingFriendRequest: Boolean = false,
+    val userNotFound: Boolean = false
 )
 
 class ProfileViewModel(
@@ -64,6 +65,18 @@ class ProfileViewModel(
                         .get()
                         .await()
                 }
+
+                // Проверяем существование пользователя (только для чужих профилей)
+                if (!profileSnapshot.exists() && friendUid != null) {
+                    Log.w("ProfileViewModel", "User not found: $targetUid")
+                    _state.value = ProfileViewState(
+                        isLoading = false,
+                        userNotFound = true,
+                        isOwnProfile = false
+                    )
+                    return@launch
+                }
+
                 val profileData = profileSnapshot.value as? Map<String, Any>
                 val profile = if (profileData != null && profileSnapshot.exists()) {
                     ProfileCheckResponse(
@@ -117,11 +130,25 @@ class ProfileViewModel(
                 )
             } catch (e: Exception) {
                 Log.e("ProfileViewModel", "Error loading profile: ${e.message}", e)
-                _state.value = ProfileViewState(
-                    isLoading = false,
-                    error = "Ошибка загрузки профиля: ${e.message}",
-                    isOwnProfile = friendUid == null
-                )
+
+                // Проверяем, не связана ли ошибка с отсутствием пользователя
+                val isUserNotFoundError = e.message?.contains("not found", ignoreCase = true) == true ||
+                        e.message?.contains("deleted", ignoreCase = true) == true ||
+                        e.message?.contains("не существует", ignoreCase = true) == true
+
+                if (isUserNotFoundError && friendUid != null) {
+                    _state.value = ProfileViewState(
+                        isLoading = false,
+                        userNotFound = true,
+                        isOwnProfile = false
+                    )
+                } else {
+                    _state.value = ProfileViewState(
+                        isLoading = false,
+                        error = "Ошибка загрузки профиля: ${e.message}",
+                        isOwnProfile = friendUid == null
+                    )
+                }
             }
         }
     }
@@ -141,7 +168,10 @@ class ProfileViewModel(
                     db.getReference("users/$targetUid").get().await()
                 }
                 if (!targetSnapshot.exists()) {
-                    _state.value = _state.value.copy(isProcessingFriendRequest = false)
+                    _state.value = _state.value.copy(
+                        isProcessingFriendRequest = false,
+                        userNotFound = true
+                    )
                     onResult(false, "Пользователь не существует")
                     return@launch
                 }
@@ -327,6 +357,10 @@ class ProfileViewModel(
                 onResult(false, "Ошибка: ${e.message}")
             }
         }
+    }
+
+    fun clearUserNotFoundState() {
+        _state.value = _state.value.copy(userNotFound = false)
     }
 
     private fun setupFriendshipListener() {

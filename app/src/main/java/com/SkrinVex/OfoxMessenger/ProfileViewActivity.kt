@@ -113,16 +113,38 @@ fun ProfileViewScreen(
         )
     }
 
-    BackHandler { onBack() }
+    BackHandler {
+        // Если пользователь не найден, не позволяем закрыть экран через системную кнопку "назад"
+        if (!profileState.userNotFound) {
+            onBack()
+        }
+    }
 
     Scaffold(
-        topBar = { RoundedTopBar(title = "Профиль", onBack = onBack) },
+        topBar = {
+            if (!profileState.userNotFound) {
+                RoundedTopBar(title = "Профиль", onBack = onBack)
+            }
+        },
         containerColor = Color(0xFF101010)
     ) { paddingValues ->
         when {
             profileState.isLoading -> {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator(color = Color(0xFFFF6B35))
+                }
+            }
+            profileState.userNotFound -> {
+                // Показываем диалог поверх всего содержимого
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .background(Color.Black.copy(alpha = 0.7f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    UserNotFoundDialog(
+                        onDismiss = onBack
+                    )
                 }
             }
             profileState.profileData != null -> {
@@ -613,4 +635,78 @@ fun EmailCard(email: String, isOwnProfile: Boolean) {
             Text(displayedEmail, color = Color.White.copy(alpha = 0.9f), fontSize = 15.sp)
         }
     }
+}
+
+@Composable
+fun UserNotFoundDialog(
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = { }, // Пустая функция - диалог нельзя закрыть кликом вне области
+        title = {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.ErrorOutline,
+                    contentDescription = null,
+                    tint = Color(0xFFFF6B35),
+                    modifier = Modifier.size(28.dp)
+                )
+                Text(
+                    text = "Пользователь не найден",
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 18.sp
+                )
+            }
+        },
+        text = {
+            Column(
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = "Этот пользователь был удален или его не существует.",
+                    color = Color.White.copy(alpha = 0.9f),
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp
+                )
+                Text(
+                    text = "Возможно, его аккаунт был деактивирован или удален администратором.",
+                    color = Color.Gray,
+                    fontSize = 12.sp,
+                    lineHeight = 16.sp
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onDismiss,
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Color(0xFFFF6B35)
+                ),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.ArrowBack,
+                    contentDescription = null,
+                    tint = Color.Black,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text(
+                    text = "Вернуться назад",
+                    color = Color.Black,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp
+                )
+            }
+        },
+        dismissButton = null, // Убираем кнопку отмены
+        containerColor = Color(0xFF1E1E1E).copy(alpha = 0.98f),
+        shape = RoundedCornerShape(16.dp),
+        modifier = Modifier.padding(16.dp)
+    )
 }
