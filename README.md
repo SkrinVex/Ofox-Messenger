@@ -20,15 +20,17 @@ Ofox Messenger — это современный мессенджер в сти�
 
 ## 📸 Скриншоты
 
-*(замени заглушки на свои реальные изображения)*  
+| Сплеш | Главная | Чат |
+|-------|---------|-----|
+| [![Сплеш](screenshots/splash.jpg)](screenshots/splash.jpg) | [![Главная](screenshots/home.jpg)](screenshots/home.jpg) | [![Чат](screenshots/chat.png)](screenshots/chat.png) |
 
-[![Сплеш](screenshots/splash.jpg)](screenshots/splash.jpg)  
-[![Главная страница](screenshots/home.jpg)](screenshots/home.jpg)  
-[![Чат](screenshots/chat.png)](screenshots/chat.png)  
-[![Лента](screenshots/feed.jpg)](screenshots/feed.jpg)  
-[![Комментарии](screenshots/comments.jpg)](screenshots/comments.jpg)  
-[![Профиль](screenshots/profile.jpg)](screenshots/profile.jpg)  
-[![Друзья](screenshots/friends.png)](screenshots/friends.png)
+| Лента | Комментарии | Профиль |
+|-------|-------------|---------|
+| [![Лента](screenshots/feed.jpg)](screenshots/feed.jpg) | [![Комментарии](screenshots/comments.jpg)](screenshots/comments.jpg) | [![Профиль](screenshots/profile.jpg)](screenshots/profile.jpg) |
+
+| Друзья |
+|--------|
+| [![Друзья](screenshots/friends.png)](screenshots/friends.png) |
 
 ---
 
