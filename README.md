@@ -26,6 +26,7 @@ Ofox Messenger — это современный мессенджер в сти�
 ![Главная страница](screenshots/home.jpg)  
 ![Чат](screenshots/chat.jpg)  
 ![Лента](screenshots/feed.jpg)
+![Коментарии](screenshots/comments.jpg)
 ![Профиль](screenshots/profile.jpg)
 ![Друзья](screenshots/friends.jpg)
 
