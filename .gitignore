@@ -13,6 +13,3 @@
 .externalNativeBuild
 .cxx
 local.properties
-.ymw
-google-services.json
-build.gradle.kts
