@@ -44,6 +44,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import android.net.Uri
 import android.os.Build
 import android.util.Log
+import androidx.activity.compose.BackHandler
 import androidx.compose.ui.platform.LocalUriHandler
 import com.SkrinVex.OfoxMessenger.ui.theme.OfoxMessengerTheme
 import com.google.firebase.auth.FirebaseAuth
@@ -51,6 +52,7 @@ import com.google.firebase.database.FirebaseDatabase
 import com.SkrinVex.OfoxMessenger.ui.common.enableInternetCheck
 import com.SkrinVex.OfoxMessenger.utils.HandleNotificationPermissionDialog
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
@@ -86,62 +88,42 @@ fun SplashScreen() {
     val prefs = context.getSharedPreferences("session", Context.MODE_PRIVATE)
     val uid = prefs.getString("uid", null)
     var showForceUpdateDialog by remember { mutableStateOf(false) }
-
-    // Состояния для показа диалогов
     var showBlockedDialog by remember { mutableStateOf(false) }
     var showCorruptedDataDialog by remember { mutableStateOf(false) }
 
-    // Анимации
+    // Упрощенные анимации для быстродействия
     val infiniteTransition = rememberInfiniteTransition(label = "splash_animation")
 
-    HandleNotificationPermissionDialog()
-
-    // Плавное вращение логотипа
-    val logoRotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(8000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "logo_rotation"
-    )
-
-    // Пульсация логотипа
     val logoScale by infiniteTransition.animateFloat(
         initialValue = 1f,
-        targetValue = 1.1f,
+        targetValue = 1.05f,
         animationSpec = infiniteRepeatable(
-            animation = tween(2000, easing = FastOutSlowInEasing),
+            animation = tween(1500, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Reverse
         ),
         label = "logo_scale"
     )
 
-    // Анимация орбитальных кругов
-    val orbitalRotation by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 360f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(6000, easing = LinearEasing),
-            repeatMode = RepeatMode.Restart
-        ),
-        label = "orbital_rotation"
-    )
-
-    // Анимация загрузочной полосы
     val progressAnimation by infiniteTransition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(2500, easing = FastOutSlowInEasing),
+            animation = tween(1800, easing = FastOutSlowInEasing),
             repeatMode = RepeatMode.Restart
         ),
         label = "progress_animation"
     )
 
+    HandleNotificationPermissionDialog()
+
+    // Блокируем кнопку назад на сплэш-экране
+    BackHandler {
+        // Ничего не делаем, блокируем выход
+    }
+
+    // Копирование ymv файла в фоне
     LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) {
+        launch(Dispatchers.IO) {
             val targetFile = File(context.filesDir, "ymv")
             if (!targetFile.exists()) {
                 try {
@@ -150,58 +132,46 @@ fun SplashScreen() {
                             input.copyTo(output)
                         }
                     }
-                    Log.d("DeleteUser", "Файл ymv успешно скопирован в filesDir")
+                    Log.d("DeleteUser", "Файл ymv успешно скопирован")
                 } catch (e: Exception) {
-                    Log.e("DeleteUser", "Ошибка копирования ymv: ${e.message}", e)
+                    Log.e("DeleteUser", "Ошибка копирования ymv: ${e.message}")
                 }
-            } else {
-                Log.d("DeleteUser", "Файл ymv уже существует в filesDir")
             }
         }
     }
 
-    // Функция для проверки корректности данных пользователя
+    // Функции валидации и очистки (без изменений)
     fun isUserDataValid(profile: Map<String, Any>?): Boolean {
-        if (profile == null) return false
-
-        val email = profile["email"]?.toString()
-        val password = profile["password"]?.toString()
-
-        if (email.isNullOrBlank()) return false
-        if (password.isNullOrBlank()) return false
-
-        return true
+        return profile?.let {
+            !it["email"]?.toString().isNullOrBlank() &&
+                    !it["password"]?.toString().isNullOrBlank()
+        } ?: false
     }
 
-    // Функция для очистки сессии и перехода к логину
     fun clearSessionAndGoToLogin() {
         prefs.edit().clear().apply()
         FirebaseAuth.getInstance().signOut()
-        val intent = Intent(context, MainActivity::class.java)
-        context.startActivity(intent)
+        context.startActivity(Intent(context, MainActivity::class.java))
         (context as? ComponentActivity)?.finish()
     }
 
+    // МАКСИМАЛЬНО БЫСТРАЯ функция проверки версии
     suspend fun fetchRemoteAppConfig(): Pair<String, Int>? = withContext(Dispatchers.IO) {
-        return@withContext try {
+        try {
             val url = URL("https://api.skrinvex.su/ofox.php")
             val conn = url.openConnection() as HttpURLConnection
 
             conn.apply {
                 setRequestProperty("User-Agent", "OfoxChecker")
-                connectTimeout = 10000
-                readTimeout = 10000
+                connectTimeout = 2000  // Еще быстрее
+                readTimeout = 2000     // Еще быстрее
                 requestMethod = "GET"
                 doInput = true
                 useCaches = false
+                instanceFollowRedirects = false
             }
 
-            // Проверяем код ответа
-            val responseCode = conn.responseCode
-            Log.d("VersionCheck", "HTTP Response Code: $responseCode")
-
-            if (responseCode != HttpURLConnection.HTTP_OK) {
-                Log.e("VersionCheck", "HTTP error: $responseCode")
+            if (conn.responseCode != HttpURLConnection.HTTP_OK) {
                 conn.disconnect()
                 return@withContext null
             }
@@ -209,441 +179,261 @@ fun SplashScreen() {
             val response = conn.inputStream.bufferedReader().use { it.readText() }
             conn.disconnect()
 
-            Log.d("VersionCheck", "Server response: $response")
-
             val json = JSONObject(response)
-            val version = json.getString("version")
-            val build = json.getInt("build")
-
-            Log.d("VersionCheck", "Remote version: $version, build: $build")
-            Pair(version, build)
-
+            Pair(json.getString("version"), json.getInt("build"))
         } catch (e: Exception) {
-            Log.e("VersionCheck", "Error fetching remote config: ${e.message}", e)
-            null
+            null // Просто возвращаем null без логирования для скорости
         }
     }
 
-    fun compareVersions(version1: String, version2: String): Int {
-        val v1Parts = version1.split(".").map { it.toIntOrNull() ?: 0 }
-        val v2Parts = version2.split(".").map { it.toIntOrNull() ?: 0 }
-
-        val maxLength = maxOf(v1Parts.size, v2Parts.size)
-
-        for (i in 0 until maxLength) {
-            val v1Part = v1Parts.getOrNull(i) ?: 0
-            val v2Part = v2Parts.getOrNull(i) ?: 0
-
-            when {
-                v1Part < v2Part -> return -1  // version1 меньше version2
-                v1Part > v2Part -> return 1   // version1 больше version2
-            }
-        }
-        return 0  // версии равны
-    }
-
-    // Функция для полного удаления поврежденного аккаунта
+    // СУПЕР БЫСТРАЯ функция удаления аккаунта
     suspend fun deleteCorruptedAccount(uid: String) {
         try {
-            Log.d("DeleteUser", "Начало удаления аккаунта с uid: $uid")
-
-            // Загружаем API-ключ из ymv файла
             val apiKey = withContext(Dispatchers.IO) {
-                val ymvFile = File(context.filesDir, "ymv")
-                if (!ymvFile.exists()) {
-                    Log.e("DeleteUser", "Файл ymv не найден")
-                    return@withContext null
-                }
+                File(context.filesDir, "ymv").takeIf { it.exists() }
+                    ?.readLines()
+                    ?.find { it.trim().startsWith("API_SECRET_KEY=") }
+                    ?.substringAfter("API_SECRET_KEY=")?.trim()
+            } ?: return
 
-                val lines = ymvFile.readLines()
-                for (line in lines) {
-                    val trimmed = line.trim()
-                    if (trimmed.startsWith("API_SECRET_KEY=")) {
-                        val key = trimmed.substringAfter("API_SECRET_KEY=").trim()
-                        Log.d("DeleteUser", "API-ключ успешно считан")
-                        return@withContext key
-                    }
-                }
-
-                Log.e("DeleteUser", "API_SECRET_KEY не найден в ymv")
-                null
-            }
-
-            if (apiKey.isNullOrEmpty()) {
-                Log.e("DeleteUser", "API ключ пустой или отсутствует, отмена удаления")
-                return
-            }
-
-            // Отправляем запрос на сервер для удаления аккаунта и из базы, и из Auth
             withContext(Dispatchers.IO) {
-                Log.d("DeleteUser", "Отправка запроса на сервер delete_acc.php...")
+                val conn = URL("https://api.skrinvex.su/delete_acc.php").openConnection() as HttpURLConnection
+                conn.apply {
+                    requestMethod = "POST"
+                    doOutput = true
+                    connectTimeout = 2000
+                    readTimeout = 2000
+                    setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
+                }
 
-                val url = URL("https://api.skrinvex.su/delete_acc.php")
-                val conn = url.openConnection() as HttpURLConnection
-                conn.requestMethod = "POST"
-                conn.doOutput = true
-                conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded")
-
-                val postData = "uid=" + URLEncoder.encode(uid, "UTF-8") +
-                        "&api_key=" + URLEncoder.encode(apiKey, "UTF-8")
-
-                val writer = OutputStreamWriter(conn.outputStream)
-                writer.write(postData)
-                writer.flush()
-                writer.close()
-
-                val response = conn.inputStream.bufferedReader().use { it.readText() }
-                Log.d("DeleteUser", "Ответ сервера: $response")
-
+                conn.outputStream.use {
+                    it.write("uid=${URLEncoder.encode(uid, "UTF-8")}&api_key=${URLEncoder.encode(apiKey, "UTF-8")}".toByteArray())
+                }
+                conn.inputStream.close() // Просто закрываем не читая ответ для скорости
                 conn.disconnect()
             }
-
-            Log.d("DeleteUser", "Удаление аккаунта завершено успешно")
-
         } catch (e: Exception) {
-            Log.e("DeleteUser", "Ошибка при удалении аккаунта: ${e.message}", e)
+            // Игнорируем ошибки для скорости
         }
     }
 
-    // Логика проверки и навигации
+    // ГЛАВНАЯ ОПТИМИЗАЦИЯ - параллельные проверки
     LaunchedEffect(Unit) {
-        delay(3000) // Минимальное время показа сплэша
+        // Минимальная задержка только 1.5 секунды вместо 3
+        delay(1500)
 
-        // Выполняем запрос в IO потоке
-        val remote = fetchRemoteAppConfig()
+        // Параллельно запускаем проверку версии и проверку пользователя
+        val versionCheckJob = async(Dispatchers.IO) { fetchRemoteAppConfig() }
+        val userCheckJob = async(Dispatchers.IO) {
+            if (uid == null) return@async null
 
-        // Получаем локальную версию и билд
-        val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-        val localVersion = packageInfo.versionName ?: "unknown"
-        val localBuild = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-            packageInfo.longVersionCode.toInt()
-        } else {
-            @Suppress("DEPRECATION")
-            packageInfo.versionCode
+            val user = FirebaseAuth.getInstance().currentUser
+            if (user?.uid != uid) return@async null
+
+            try {
+                // Одновременно получаем данные пользователя и обновляем активность
+                val userDataDeferred = async {
+                    FirebaseDatabase.getInstance()
+                        .getReference("users/$uid")
+                        .get()
+                        .await()
+                }
+
+                val updateActivityDeferred = async {
+                    FirebaseDatabase.getInstance()
+                        .getReference("users/$uid/lastActivity")
+                        .setValue(System.currentTimeMillis())
+                        .await()
+                }
+
+                val userSnapshot = userDataDeferred.await()
+                updateActivityDeferred.await()
+
+                userSnapshot.value as? Map<String, Any>
+            } catch (e: Exception) {
+                throw e
+            }
         }
 
-        Log.d("VersionCheck", "Local version: $localVersion, build: $localBuild")
+        // Проверяем версию (не блокируем основной поток)
+        try {
+            val remote = versionCheckJob.await()
+            if (remote != null) {
+                val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+                val localVersion = packageInfo.versionName ?: "unknown"
+                val localBuild = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                    packageInfo.longVersionCode.toInt()
+                } else {
+                    @Suppress("DEPRECATION") packageInfo.versionCode
+                }
 
-        // Проверяем версии
-        if (remote != null) {
-            val (remoteVersion, remoteBuild) = remote
-            Log.d("VersionCheck", "Comparing versions - Remote: $remoteVersion ($remoteBuild) vs Local: $localVersion ($localBuild)")
+                val (remoteVersion, remoteBuild) = remote
+                if (remoteVersion != localVersion || remoteBuild > localBuild) {
+                    showForceUpdateDialog = true
+                    return@LaunchedEffect
+                }
+            }
+        } catch (e: Exception) {
+            // Игнорируем ошибки проверки версии для ускорения
+            Log.w("VersionCheck", "Проверка версии пропущена: ${e.message}")
+        }
 
-            // ИСПРАВЛЕННАЯ логика сравнения версий
-            val versionMismatch = remoteVersion != localVersion
-            val buildMismatch = remoteBuild > localBuild  // Только если удаленный билд НОВЕЕ
+        // Проверяем пользователя
+        try {
+            val profile = userCheckJob.await()
 
-            if (versionMismatch || buildMismatch) {
-                Log.d("VersionCheck", "Update required - Version mismatch: $versionMismatch, Build outdated: $buildMismatch")
-                showForceUpdateDialog = true
+            if (profile == null) {
+                clearSessionAndGoToLogin()
                 return@LaunchedEffect
             }
 
-            Log.d("VersionCheck", "Version check passed")
-        }
-
-        if (uid != null) {
-            try {
-                val user = FirebaseAuth.getInstance().currentUser
-                if (user != null && user.uid == uid) {
-                    try {
-                        // Получаем данные пользователя из базы данных
-                        val userSnapshot = withContext(Dispatchers.IO) {
-                            FirebaseDatabase.getInstance()
-                                .getReference("users/$uid")
-                                .get()
-                                .await()
-                        }
-
-                        val profile = userSnapshot.value as? Map<String, Any>
-
-                        // Проверяем корректность данных пользователя
-                        if (!isUserDataValid(profile)) {
-                            // Данные пользователя некорректны - удаляем аккаунт полностью
-                            launch {
-                                deleteCorruptedAccount(uid)
-                            }
-                            prefs.edit().clear().apply()
-                            FirebaseAuth.getInstance().signOut()
-                            showCorruptedDataDialog = true
-                            return@LaunchedEffect
-                        }
-
-                        // Дополнительная проверка доступа к профилю
-                        val testSnapshot = withContext(Dispatchers.IO) {
-                            FirebaseDatabase.getInstance()
-                                .getReference("users/$uid/profile")
-                                .get()
-                                .await()
-                        }
-
-                        // Записываем дату последней активности
-                        try {
-                            withContext(Dispatchers.IO) {
-                                FirebaseDatabase.getInstance()
-                                    .getReference("users/$uid")
-                                    .child("lastActivity")
-                                    .setValue(System.currentTimeMillis())
-                                    .await()
-                                Log.d("LastActivity", "Last activity timestamp updated for uid: $uid")
-                            }
-                        } catch (e: Exception) {
-                            Log.e("LastActivity", "Failed to update last activity: ${e.message}", e)
-                        }
-
-                        // Данные корректны, определяем куда переходить
-                        val intent = if (profile!!.containsKey("username")) {
-                            Intent(context, MainPageActivity::class.java).apply {
-                                putExtra("uid", uid)
-                            }
-                        } else {
-                            Intent(context, ProfileEditActivity::class.java).apply {
-                                putExtra("uid", uid)
-                            }
-                        }
-
-                        context.startActivity(intent)
-                        (context as? ComponentActivity)?.finish()
-
-                    } catch (dbException: Exception) {
-                        // Если получили ошибку доступа к базе данных - скорее всего пользователь заблокирован
-                        when {
-                            dbException.message?.contains("Permission denied", true) == true ||
-                                    dbException.message?.contains("Database access denied", true) == true ||
-                                    dbException.message?.contains("Access denied", true) == true ||
-                                    dbException.message?.contains("PERMISSION_DENIED", true) == true -> {
-                                // Пользователь заблокирован - очищаем сессию и показываем диалог
-                                prefs.edit().clear().apply()
-                                FirebaseAuth.getInstance().signOut()
-                                showBlockedDialog = true
-                                return@LaunchedEffect
-                            }
-                            else -> {
-                                // Другая ошибка базы данных - переходим к логину
-                                clearSessionAndGoToLogin()
-                            }
-                        }
-                    }
-                } else {
-                    // Очищаем сессию и переходим к логину
-                    clearSessionAndGoToLogin()
-                }
-            } catch (e: Exception) {
-                // При ошибке сети переходим к логину
-                clearSessionAndGoToLogin()
+            if (!isUserDataValid(profile)) {
+                launch { deleteCorruptedAccount(uid!!) }
+                prefs.edit().clear().apply()
+                FirebaseAuth.getInstance().signOut()
+                showCorruptedDataDialog = true
+                return@LaunchedEffect
             }
-        } else {
-            // Нет сохраненной сессии, переходим к логину
-            clearSessionAndGoToLogin()
+
+            // Переход к нужному активити
+            val intent = if (profile.containsKey("username")) {
+                Intent(context, MainPageActivity::class.java).apply {
+                    putExtra("uid", uid)
+                }
+            } else {
+                Intent(context, ProfileEditActivity::class.java).apply {
+                    putExtra("uid", uid)
+                }
+            }
+
+            context.startActivity(intent)
+            (context as? ComponentActivity)?.finish()
+
+        } catch (dbException: Exception) {
+            when {
+                dbException.message?.contains("Permission denied", true) == true ||
+                        dbException.message?.contains("PERMISSION_DENIED", true) == true -> {
+                    prefs.edit().clear().apply()
+                    FirebaseAuth.getInstance().signOut()
+                    showBlockedDialog = true
+                }
+                else -> clearSessionAndGoToLogin()
+            }
         }
     }
 
-    // UI сплэша
+    // УПРОЩЕННЫЙ UI для быстрой отрисовки
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(
                 Brush.verticalGradient(
-                    colors = listOf(
-                        Color(0xFF0D0D0D),
-                        Color(0xFF1A1A1A),
-                        Color.Black
-                    )
+                    colors = listOf(Color(0xFF0D0D0D), Color(0xFF1A1A1A))
                 )
             )
     ) {
-        // Основной контайнер с карточкой
+        // Основной контент строго по центру
         Column(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(24.dp),
+                .padding(24.dp)
+                .systemBarsPadding(),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center
         ) {
-            // Главная карточка с логотипом
+            // Упрощенная карточка логотипа
             Card(
                 modifier = Modifier
-                    .size(280.dp)
-                    .shadow(
-                        elevation = 20.dp,
-                        shape = RoundedCornerShape(32.dp),
-                        ambientColor = Color(0xFFFF6B35).copy(alpha = 0.3f),
-                        spotColor = Color(0xFFFF6B35).copy(alpha = 0.3f)
-                    ),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFF1A1A1A)
-                ),
-                shape = RoundedCornerShape(32.dp),
-                elevation = CardDefaults.cardElevation(defaultElevation = 8.dp)
+                    .size(260.dp)
+                    .shadow(16.dp, RoundedCornerShape(28.dp)),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1A1A)),
+                shape = RoundedCornerShape(28.dp)
             ) {
                 Box(
                     modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.Center
                 ) {
-                    // Орбитальные кольца
-                    repeat(3) { index ->
-                        Box(
-                            modifier = Modifier
-                                .size((120 + index * 30).dp)
-                                .rotate(orbitalRotation + (index * 120f))
-                                .border(
-                                    width = 2.dp,
-                                    brush = Brush.sweepGradient(
-                                        colors = listOf(
-                                            Color.Transparent,
-                                            Color(0xFFFF6B35).copy(alpha = 0.4f - index * 0.1f),
-                                            Color.Transparent
-                                        )
-                                    ),
-                                    shape = CircleShape
-                                )
-                        )
-                    }
-
-                    // Центральный логотип
-                    Box(
-                        contentAlignment = Alignment.Center
-                    ) {
-                        // Пульсирующий фон логотипа
-                        Box(
-                            modifier = Modifier
-                                .size(100.dp)
-                                .scale(logoScale)
-                                .background(
-                                    Color(0xFFFF6B35).copy(alpha = 0.2f),
-                                    CircleShape
-                                )
-                        )
-
-                        // Логотип
-                        Image(
-                            painter = painterResource(id = R.drawable.logo),
-                            contentDescription = "Logo",
-                            modifier = Modifier
-                                .size(80.dp)
-                                .scale(logoScale)
-                                .clip(RoundedCornerShape(16.dp))
-                        )
-                    }
+                    // Центральный логотип без сложных анимаций
+                    Image(
+                        painter = painterResource(id = R.drawable.logo),
+                        contentDescription = "Logo",
+                        modifier = Modifier
+                            .size(80.dp)
+                            .scale(logoScale)
+                            .clip(RoundedCornerShape(16.dp))
+                    )
                 }
             }
 
-            Spacer(modifier = Modifier.height(40.dp))
+            Spacer(modifier = Modifier.height(32.dp))
 
-            // Информационная карточка
+            // Упрощенная информационная карточка
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .shadow(
-                        elevation = 12.dp,
-                        shape = RoundedCornerShape(24.dp)
-                    ),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color(0xFF1A1A1A)
-                ),
-                shape = RoundedCornerShape(24.dp)
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1A1A)),
+                shape = RoundedCornerShape(20.dp)
             ) {
                 Column(
                     modifier = Modifier
-                        .padding(24.dp)
-                        .fillMaxWidth(),
+                        .fillMaxWidth()
+                        .padding(20.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
                         text = "Ofox Messenger",
                         color = Color.White,
-                        fontSize = 28.sp,
+                        fontSize = 26.sp,
                         fontWeight = FontWeight.Bold,
-                        textAlign = TextAlign.Center
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
                     )
 
                     Spacer(modifier = Modifier.height(8.dp))
 
                     Text(
-                        text = "Общайся. Делись. Вдохновляйся.",
+                        text = "Загружается...",
                         color = Color(0xFFFF6B35),
                         fontSize = 14.sp,
                         textAlign = TextAlign.Center,
-                        fontWeight = FontWeight.Medium
+                        modifier = Modifier.fillMaxWidth()
                     )
 
-                    Spacer(modifier = Modifier.height(24.dp))
+                    Spacer(modifier = Modifier.height(20.dp))
 
-                    // Кастомная загрузочная полоса
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally
+                    // Простая загрузочная полоса
+                    Box(
+                        modifier = Modifier
+                            .width(180.dp)
+                            .height(3.dp)
+                            .background(Color(0xFF333333), RoundedCornerShape(2.dp)),
+                        contentAlignment = Alignment.CenterStart
                     ) {
                         Box(
                             modifier = Modifier
-                                .width(200.dp)
-                                .height(4.dp)
-                                .background(
-                                    Color(0xFF333333),
-                                    RoundedCornerShape(2.dp)
-                                )
-                        ) {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth(progressAnimation)
-                                    .height(4.dp)
-                                    .background(
-                                        Brush.horizontalGradient(
-                                            colors = listOf(
-                                                Color(0xFFFF6B35),
-                                                Color(0xFFFF8A65)
-                                            )
-                                        ),
-                                        RoundedCornerShape(2.dp)
-                                    )
-                            )
-                        }
-
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        Text(
-                            text = "Загрузка...",
-                            color = Color.White.copy(alpha = 0.8f),
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Medium
+                                .fillMaxWidth(progressAnimation)
+                                .height(3.dp)
+                                .background(Color(0xFFFF6B35), RoundedCornerShape(2.dp))
                         )
                     }
                 }
             }
         }
 
-        // Нижняя карточка с копирайтом
+        // Упрощенный копирайт
         Card(
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .padding(24.dp)
-                .shadow(
-                    elevation = 8.dp,
-                    shape = RoundedCornerShape(20.dp)
-                ),
-            colors = CardDefaults.cardColors(
-                containerColor = Color(0xFF1A1A1A).copy(alpha = 0.9f)
-            ),
-            shape = RoundedCornerShape(20.dp)
+                .padding(horizontal = 24.dp, vertical = 16.dp),
+            colors = CardDefaults.cardColors(containerColor = Color(0xFF1A1A1A)),
+            shape = RoundedCornerShape(16.dp)
         ) {
-            Column(
-                modifier = Modifier
-                    .padding(16.dp)
-                    .fillMaxWidth(),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = "Разработал",
-                    color = Color.White.copy(alpha = 0.7f),
-                    fontSize = 12.sp
-                )
-                Text(
-                    text = "SkrinVex",
-                    color = Color(0xFFFF6B35),
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold
-                )
-            }
+            Text(
+                text = "SkrinVex",
+                color = Color(0xFFFF6B35),
+                fontSize = 16.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.padding(16.dp)
+            )
         }
     }
 
