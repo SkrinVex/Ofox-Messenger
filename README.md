@@ -23,15 +23,46 @@ Ofox Messenger — это современный мессенджер в сти�
 <details>
   <summary><strong>Показать скриншоты (7)</strong></summary>
 
-  <p align="center">
-    <img src="screenshots/splash.jpg" alt="Сплеш" width="230"/>
-    <img src="screenshots/home.jpg" alt="Главная" width="230"/>
-    <img src="screenshots/chat.png" alt="Чат" width="230"/>
-    <img src="screenshots/feed.jpg" alt="Лента" width="230"/>
-    <img src="screenshots/comments.jpg" alt="Комментарии" width="230"/>
-    <img src="screenshots/profile.jpg" alt="Профиль" width="230"/>
-    <img src="screenshots/friends.png" alt="Друзья" width="230"/>
-  </p>
+  <div align="center">
+
+  <table>
+    <tr>
+      <td align="center" style="padding:10px">
+        <img src="screenshots/splash.jpg" alt="Сплеш" width="230"/><br/>
+        <sub>Экран загрузки (Splash)</sub>
+      </td>
+      <td align="center" style="padding:10px">
+        <img src="screenshots/home.jpg" alt="Главная" width="230"/><br/>
+        <sub>Главная страница</sub>
+      </td>
+      <td align="center" style="padding:10px">
+        <img src="screenshots/chat.png" alt="Чат" width="230"/><br/>
+        <sub>Окно чата</sub>
+      </td>
+    </tr>
+    <tr>
+      <td align="center" style="padding:10px">
+        <img src="screenshots/feed.jpg" alt="Лента" width="230"/><br/>
+        <sub>Лента постов</sub>
+      </td>
+      <td align="center" style="padding:10px">
+        <img src="screenshots/comments.jpg" alt="Комментарии" width="230"/><br/>
+        <sub>Комментарии</sub>
+      </td>
+      <td align="center" style="padding:10px">
+        <img src="screenshots/profile.jpg" alt="Профиль" width="230"/><br/>
+        <sub>Профиль пользователя</sub>
+      </td>
+    </tr>
+    <tr>
+      <td align="center" style="padding:10px">
+        <img src="screenshots/friends.png" alt="Друзья" width="230"/><br/>
+        <sub>Список друзей</sub>
+      </td>
+    </tr>
+  </table>
+
+  </div>
 </details>
 
 ---
