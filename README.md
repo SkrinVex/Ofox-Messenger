@@ -35,7 +35,7 @@ Ofox Messenger — это современный мессенджер в сти�
 
 - **Kotlin (Android)**
 - **Jetpack Compose**
-- **Firebase (Auth, Realtime Database, Cloud Messaging, Storage)**
+- **Firebase (Auth, Realtime Database, Cloud Messaging)**
 - **Material Design / кастомный черно-оранжевый UI**
 - **Собственный API / Ofox API**
 
