@@ -52,7 +52,11 @@ class FriendsViewModel(private val uid: String) : ViewModel() {
                     for (fs in friendSnapshot.children) {
                         val fdata = fs.getValue(indicator)
                         if (fdata?.get("status") == "friends") {
-                            userProfileFetch(fs.key)?.let { friend ->
+                            val friendUid = fs.key
+                            val friend = userProfileFetch(friendUid)
+
+                            // Пропускаем, если скрыт
+                            if (friend != null && !shouldHideUser(friendUid)) {
                                 if (searchQuery.isNullOrBlank() ||
                                     friend.nickname?.contains(searchQuery, true) == true ||
                                     friend.username.contains(searchQuery, true)
@@ -72,6 +76,12 @@ class FriendsViewModel(private val uid: String) : ViewModel() {
                     if (friendsList.any { it.id == uid2 }) return@mapNotNull null
 
                     val m = userSnap.getValue(indicator) ?: return@mapNotNull null
+
+                    // Пропускаем если email пустой или is_disabled = true
+                    val email = m["email"] as? String?
+                    val isDisabled = m["is_disabled"] as? Boolean ?: false
+                    if (email.isNullOrBlank() || isDisabled) return@mapNotNull null
+
                     val u = Friend(
                         id = uid2,
                         username = m["username"] as? String ?: "",
@@ -107,6 +117,23 @@ class FriendsViewModel(private val uid: String) : ViewModel() {
                 Log.e("FriendsVM", msg, e)
                 _state.value = FriendsViewState(error = msg)
             }
+        }
+    }
+
+    private suspend fun shouldHideUser(uid: String?): Boolean {
+        if (uid == null) return true
+        return try {
+            val snap = FirebaseDatabase.getInstance().getReference("users/$uid").get().await()
+            if (!snap.exists()) return true
+
+            val data = snap.value as? Map<String, Any?> ?: return true
+            val email = data["email"] as? String?
+            val isDisabled = data["is_disabled"] as? Boolean ?: false
+
+            email.isNullOrBlank() || isDisabled
+        } catch (e: Exception) {
+            Log.e("FriendsVM", "Ошибка при проверке is_disabled/email: ${e.message}")
+            true // лучше спрятать в случае ошибки
         }
     }
 

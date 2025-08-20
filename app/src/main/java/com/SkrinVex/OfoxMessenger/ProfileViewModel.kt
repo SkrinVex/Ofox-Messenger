@@ -47,7 +47,6 @@ class ProfileViewModel(
                 val targetUid = friendUid ?: uid
                 Log.d("ProfileViewModel", "Loading profile for UID: $targetUid")
 
-                // Проверяем авторизацию
                 val currentUser = FirebaseAuth.getInstance().currentUser
                 if (currentUser == null) {
                     _state.value = ProfileViewState(
@@ -58,7 +57,6 @@ class ProfileViewModel(
                     return@launch
                 }
 
-                // Загружаем профиль
                 val profileSnapshot = withContext(Dispatchers.IO) {
                     FirebaseDatabase.getInstance()
                         .getReference("users/$targetUid")
@@ -66,9 +64,28 @@ class ProfileViewModel(
                         .await()
                 }
 
-                // Проверяем существование пользователя (только для чужих профилей)
-                if (!profileSnapshot.exists() && friendUid != null) {
-                    Log.w("ProfileViewModel", "User not found: $targetUid")
+                if (!profileSnapshot.exists()) {
+                    Log.w("ProfileViewModel", "Профиль не найден: $targetUid")
+                    _state.value = ProfileViewState(
+                        isLoading = false,
+                        userNotFound = true,
+                        isOwnProfile = friendUid == null
+                    )
+                    return@launch
+                }
+
+                val profileData = profileSnapshot.value as? Map<String, Any?>
+
+                val email = profileData?.get("email") as? String?
+                val isDisabled = profileData?.get("is_disabled") as? Boolean ?: false
+
+                Log.d("ProfileViewModel", "email=$email, isDisabled=$isDisabled, friendUid=$friendUid")
+
+                val isViewingOwnProfile = friendUid == null
+                val userNotFoundCondition = !isViewingOwnProfile && (email.isNullOrBlank() || isDisabled)
+
+                if (userNotFoundCondition) {
+                    Log.w("ProfileViewModel", "User is disabled or logically deleted: $targetUid")
                     _state.value = ProfileViewState(
                         isLoading = false,
                         userNotFound = true,
@@ -77,34 +94,23 @@ class ProfileViewModel(
                     return@launch
                 }
 
-                val profileData = profileSnapshot.value as? Map<String, Any>
-                val profile = if (profileData != null && profileSnapshot.exists()) {
-                    ProfileCheckResponse(
-                        success = true,
-                        user_id = targetUid,
-                        username = profileData["username"] as? String,
-                        nickname = profileData["nickname"] as? String,
-                        email = profileData["email"] as? String ?: currentUser.email,
-                        birthday = profileData["birthday"] as? String,
-                        status = profileData["status"] as? String,
-                        bio = profileData["bio"] as? String,
-                        profile_photo = profileData["profile_photo"] as? String,
-                        background_photo = profileData["background_photo"] as? String,
-                        profile_completion = (profileData["profile_completion"] as? Long)?.toInt() ?: calculateProfileCompletion(profileData),
-                        is_friend = false,
-                        friendship_status = if (friendUid == null) "own_profile" else "none"
-                    )
-                } else {
-                    ProfileCheckResponse(
-                        success = true,
-                        user_id = targetUid,
-                        email = currentUser.email,
-                        profile_completion = 0,
-                        friendship_status = if (friendUid == null) "own_profile" else "none"
-                    )
-                }
+                val profile = ProfileCheckResponse(
+                    success = true,
+                    user_id = targetUid,
+                    username = profileData?.get("username") as? String,
+                    nickname = profileData?.get("nickname") as? String,
+                    email = email ?: currentUser.email,
+                    birthday = profileData?.get("birthday") as? String,
+                    status = profileData?.get("status") as? String,
+                    bio = profileData?.get("bio") as? String,
+                    profile_photo = profileData?.get("profile_photo") as? String,
+                    background_photo = profileData?.get("background_photo") as? String,
+                    profile_completion = (profileData?.get("profile_completion") as? Long)?.toInt()
+                        ?: calculateProfileCompletion(profileData),
+                    is_friend = false,
+                    friendship_status = if (friendUid == null) "own_profile" else "none"
+                )
 
-                // Загружаем статус дружбы
                 val finalProfile = if (friendUid != null) {
                     val friendshipSnapshot = withContext(Dispatchers.IO) {
                         FirebaseDatabase.getInstance()
@@ -121,8 +127,6 @@ class ProfileViewModel(
                     profile.copy(friendship_status = "own_profile")
                 }
 
-                Log.d("ProfileViewModel", "Profile loaded: user_id=${finalProfile.user_id}, friendship_status=${finalProfile.friendship_status}, is_friend=${finalProfile.is_friend}")
-
                 _state.value = ProfileViewState(
                     isLoading = false,
                     profileData = finalProfile,
@@ -130,25 +134,11 @@ class ProfileViewModel(
                 )
             } catch (e: Exception) {
                 Log.e("ProfileViewModel", "Error loading profile: ${e.message}", e)
-
-                // Проверяем, не связана ли ошибка с отсутствием пользователя
-                val isUserNotFoundError = e.message?.contains("not found", ignoreCase = true) == true ||
-                        e.message?.contains("deleted", ignoreCase = true) == true ||
-                        e.message?.contains("не существует", ignoreCase = true) == true
-
-                if (isUserNotFoundError && friendUid != null) {
-                    _state.value = ProfileViewState(
-                        isLoading = false,
-                        userNotFound = true,
-                        isOwnProfile = false
-                    )
-                } else {
-                    _state.value = ProfileViewState(
-                        isLoading = false,
-                        error = "Ошибка загрузки профиля: ${e.message}",
-                        isOwnProfile = friendUid == null
-                    )
-                }
+                _state.value = ProfileViewState(
+                    isLoading = false,
+                    error = "Ошибка загрузки профиля: ${e.message}",
+                    isOwnProfile = friendUid == null
+                )
             }
         }
     }

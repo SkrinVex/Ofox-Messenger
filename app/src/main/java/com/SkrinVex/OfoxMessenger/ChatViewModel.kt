@@ -12,6 +12,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import java.util.UUID
+import java.util.regex.Pattern
 
 data class Message(
     val id: String,
@@ -78,6 +79,26 @@ class ChatViewModel(
                     .setValue("delivered")
                     .await()
 
+                // Отправляем уведомление о том что вас упомянули
+                val mentions = extractMentions(_state.value.messageText)
+                for (mention in mentions) {
+                    val uid = getUidByUsername(mention)
+                    if (uid != null && uid != currentUserId) {
+                        val notificationId = UUID.randomUUID().toString()
+                        FirebaseDatabase.getInstance()
+                            .getReference("users/$uid/notifications/$notificationId")
+                            .setValue(
+                                mapOf(
+                                    "type" to "mention",
+                                    "from_uid" to currentUserId,
+                                    "message_id" to messageId,
+                                    "timestamp" to System.currentTimeMillis(),
+                                    "message" to "$mention, вас упомянули в сообщении"
+                                )
+                            ).await()
+                    }
+                }
+
                 // Отправляем уведомление о новом сообщении
                 val notificationId = UUID.randomUUID().toString()
                 FirebaseDatabase.getInstance()
@@ -104,8 +125,28 @@ class ChatViewModel(
         }
     }
 
-    fun copyMessage(content: String) {
-        // Копирование осуществляется в UI через ClipboardManager
+    fun extractMentions(text: String): List<String> {
+        val pattern = Pattern.compile("@[a-zA-Z0-9_]+")
+        val matcher = pattern.matcher(text)
+        val mentions = mutableListOf<String>()
+        while (matcher.find()) {
+            mentions.add(matcher.group())
+        }
+        return mentions
+    }
+
+    suspend fun getUidByUsername(username: String): String? {
+        return try {
+            val snapshot = FirebaseDatabase.getInstance()
+                .getReference("users")
+                .orderByChild("username")
+                .equalTo(username)
+                .get()
+                .await()
+            snapshot.children.firstOrNull()?.key
+        } catch (e: Exception) {
+            null
+        }
     }
 
     fun deleteMessage(messageId: String) {

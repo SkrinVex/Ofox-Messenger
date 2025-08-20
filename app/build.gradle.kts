@@ -14,8 +14,8 @@ android {
         applicationId = "com.SkrinVex.OfoxMessenger"
         minSdk = 24
         targetSdk = 36
-        versionCode = 72
-        versionName = "1.2"
+        versionCode = 81
+        versionName = "1.3"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -77,4 +77,5 @@ dependencies {
     implementation("com.google.firebase:firebase-database-ktx")
     implementation("com.google.firebase:firebase-auth-ktx")
     implementation("com.google.accompanist:accompanist-systemuicontroller:0.36.0")
+    implementation("com.google.firebase:firebase-messaging:25.0.0")
 }

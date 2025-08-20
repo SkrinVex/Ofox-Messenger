@@ -2,6 +2,8 @@ package com.SkrinVex.OfoxMessenger
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.content.pm.Signature
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -40,22 +42,27 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.text.style.TextDecoration
 import android.net.Uri
+import android.os.Build
 import android.util.Log
 import androidx.compose.ui.platform.LocalUriHandler
 import com.SkrinVex.OfoxMessenger.ui.theme.OfoxMessengerTheme
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.FirebaseDatabase
 import com.SkrinVex.OfoxMessenger.ui.common.enableInternetCheck
+import com.SkrinVex.OfoxMessenger.utils.HandleNotificationPermissionDialog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.io.File
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
+import java.security.MessageDigest
+import kotlin.system.exitProcess
 
 class SplashActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -78,6 +85,7 @@ fun SplashScreen() {
     val context = LocalContext.current
     val prefs = context.getSharedPreferences("session", Context.MODE_PRIVATE)
     val uid = prefs.getString("uid", null)
+    var showForceUpdateDialog by remember { mutableStateOf(false) }
 
     // Состояния для показа диалогов
     var showBlockedDialog by remember { mutableStateOf(false) }
@@ -85,6 +93,8 @@ fun SplashScreen() {
 
     // Анимации
     val infiniteTransition = rememberInfiniteTransition(label = "splash_animation")
+
+    HandleNotificationPermissionDialog()
 
     // Плавное вращение логотипа
     val logoRotation by infiniteTransition.animateFloat(
@@ -172,6 +182,66 @@ fun SplashScreen() {
         (context as? ComponentActivity)?.finish()
     }
 
+    suspend fun fetchRemoteAppConfig(): Pair<String, Int>? = withContext(Dispatchers.IO) {
+        return@withContext try {
+            val url = URL("https://api.skrinvex.su/ofox.php")
+            val conn = url.openConnection() as HttpURLConnection
+
+            conn.apply {
+                setRequestProperty("User-Agent", "OfoxChecker")
+                connectTimeout = 10000
+                readTimeout = 10000
+                requestMethod = "GET"
+                doInput = true
+                useCaches = false
+            }
+
+            // Проверяем код ответа
+            val responseCode = conn.responseCode
+            Log.d("VersionCheck", "HTTP Response Code: $responseCode")
+
+            if (responseCode != HttpURLConnection.HTTP_OK) {
+                Log.e("VersionCheck", "HTTP error: $responseCode")
+                conn.disconnect()
+                return@withContext null
+            }
+
+            val response = conn.inputStream.bufferedReader().use { it.readText() }
+            conn.disconnect()
+
+            Log.d("VersionCheck", "Server response: $response")
+
+            val json = JSONObject(response)
+            val version = json.getString("version")
+            val build = json.getInt("build")
+
+            Log.d("VersionCheck", "Remote version: $version, build: $build")
+            Pair(version, build)
+
+        } catch (e: Exception) {
+            Log.e("VersionCheck", "Error fetching remote config: ${e.message}", e)
+            null
+        }
+    }
+
+    fun compareVersions(version1: String, version2: String): Int {
+        val v1Parts = version1.split(".").map { it.toIntOrNull() ?: 0 }
+        val v2Parts = version2.split(".").map { it.toIntOrNull() ?: 0 }
+
+        val maxLength = maxOf(v1Parts.size, v2Parts.size)
+
+        for (i in 0 until maxLength) {
+            val v1Part = v1Parts.getOrNull(i) ?: 0
+            val v2Part = v2Parts.getOrNull(i) ?: 0
+
+            when {
+                v1Part < v2Part -> return -1  // version1 меньше version2
+                v1Part > v2Part -> return 1   // version1 больше version2
+            }
+        }
+        return 0  // версии равны
+    }
+
     // Функция для полного удаления поврежденного аккаунта
     suspend fun deleteCorruptedAccount(uid: String) {
         try {
@@ -239,6 +309,39 @@ fun SplashScreen() {
     LaunchedEffect(Unit) {
         delay(3000) // Минимальное время показа сплэша
 
+        // Выполняем запрос в IO потоке
+        val remote = fetchRemoteAppConfig()
+
+        // Получаем локальную версию и билд
+        val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+        val localVersion = packageInfo.versionName ?: "unknown"
+        val localBuild = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            packageInfo.longVersionCode.toInt()
+        } else {
+            @Suppress("DEPRECATION")
+            packageInfo.versionCode
+        }
+
+        Log.d("VersionCheck", "Local version: $localVersion, build: $localBuild")
+
+        // Проверяем версии
+        if (remote != null) {
+            val (remoteVersion, remoteBuild) = remote
+            Log.d("VersionCheck", "Comparing versions - Remote: $remoteVersion ($remoteBuild) vs Local: $localVersion ($localBuild)")
+
+            // ИСПРАВЛЕННАЯ логика сравнения версий
+            val versionMismatch = remoteVersion != localVersion
+            val buildMismatch = remoteBuild > localBuild  // Только если удаленный билд НОВЕЕ
+
+            if (versionMismatch || buildMismatch) {
+                Log.d("VersionCheck", "Update required - Version mismatch: $versionMismatch, Build outdated: $buildMismatch")
+                showForceUpdateDialog = true
+                return@LaunchedEffect
+            }
+
+            Log.d("VersionCheck", "Version check passed")
+        }
+
         if (uid != null) {
             try {
                 val user = FirebaseAuth.getInstance().currentUser
@@ -272,6 +375,20 @@ fun SplashScreen() {
                                 .getReference("users/$uid/profile")
                                 .get()
                                 .await()
+                        }
+
+                        // Записываем дату последней активности
+                        try {
+                            withContext(Dispatchers.IO) {
+                                FirebaseDatabase.getInstance()
+                                    .getReference("users/$uid")
+                                    .child("lastActivity")
+                                    .setValue(System.currentTimeMillis())
+                                    .await()
+                                Log.d("LastActivity", "Last activity timestamp updated for uid: $uid")
+                            }
+                        } catch (e: Exception) {
+                            Log.e("LastActivity", "Failed to update last activity: ${e.message}", e)
                         }
 
                         // Данные корректны, определяем куда переходить
@@ -532,6 +649,24 @@ fun SplashScreen() {
 
     // Красивый диалог блокировки аккаунта
     if (showBlockedDialog) {
+        val uriHandler = LocalUriHandler.current
+        val supportUrl = "https://ofox.skrinvex.su/support/"
+
+        // Создаем аннотированный текст для кнопки поддержки
+        val annotatedSupportText = buildAnnotatedString {
+            pushStringAnnotation(tag = "URL", annotation = supportUrl)
+            withStyle(
+                style = SpanStyle(
+                    color = Color(0xFFFF6B35),
+                    textDecoration = TextDecoration.Underline,
+                    fontWeight = FontWeight.Bold
+                )
+            ) {
+                append("Обратиться в поддержку")
+            }
+            pop()
+        }
+
         AlertDialog(
             onDismissRequest = { /* Не позволяем закрыть диалог */ },
             confirmButton = {
@@ -551,6 +686,40 @@ fun SplashScreen() {
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
                         fontSize = 16.sp
+                    )
+                }
+            },
+            dismissButton = {
+                OutlinedButton(
+                    onClick = {
+                        uriHandler.openUri(supportUrl)
+                    },
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = Color(0xFFFF6B35)
+                    ),
+                    border = ButtonDefaults.outlinedButtonBorder.copy(
+                        brush = Brush.horizontalGradient(
+                            colors = listOf(Color(0xFFFF6B35), Color(0xFFFF8A65))
+                        )
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    ClickableText(
+                        text = annotatedSupportText,
+                        style = androidx.compose.ui.text.TextStyle(
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Medium
+                        ),
+                        onClick = { offset ->
+                            annotatedSupportText.getStringAnnotations(
+                                tag = "URL",
+                                start = offset,
+                                end = offset
+                            ).firstOrNull()?.let { annotation ->
+                                uriHandler.openUri(annotation.item)
+                            }
+                        }
                     )
                 }
             },
@@ -615,7 +784,7 @@ fun SplashScreen() {
                                 modifier = Modifier.size(20.dp)
                             )
                             Text(
-                                text = "Если считаете это ошибкой, обратитесь в службу поддержки",
+                                text = "Если считаете это ошибкой, используйте кнопку ниже для связи с поддержкой.",
                                 color = Color.White.copy(alpha = 0.8f),
                                 fontSize = 14.sp,
                                 lineHeight = 20.sp
@@ -623,6 +792,83 @@ fun SplashScreen() {
                         }
                     }
                 }
+            },
+            containerColor = Color(0xFF1A1A1A),
+            shape = RoundedCornerShape(20.dp),
+            properties = DialogProperties(
+                dismissOnBackPress = false,
+                dismissOnClickOutside = false
+            ),
+            modifier = Modifier.shadow(
+                elevation = 24.dp,
+                shape = RoundedCornerShape(20.dp)
+            )
+        )
+    }
+
+    // Диалог о необходимости обновления приложения
+    if (showForceUpdateDialog) {
+        val uriHandler = LocalUriHandler.current
+
+        AlertDialog(
+            onDismissRequest = {},
+            confirmButton = {
+                Button(
+                    onClick = {
+                        uriHandler.openUri("https://ofox.skrinvex.su")
+                        (context as? ComponentActivity)?.finishAffinity()
+                        exitProcess(0)
+                    },
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFFFF6B35)
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = "Скачать новую версию",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp
+                    )
+                }
+            },
+            title = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(48.dp)
+                            .background(
+                                Color(0xFFFF6B35).copy(alpha = 0.2f),
+                                CircleShape
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Warning,
+                            contentDescription = null,
+                            tint = Color(0xFFFF6B35),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    Text(
+                        text = "Требуется обновление",
+                        color = Color.White,
+                        fontSize = 20.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            },
+            text = {
+                Text(
+                    text = "Вы используете устаревшую или неподдерживаемую версию приложения. Пожалуйста, скачайте последнюю версию.",
+                    color = Color.White.copy(alpha = 0.9f),
+                    fontSize = 16.sp,
+                    lineHeight = 24.sp
+                )
             },
             containerColor = Color(0xFF1A1A1A),
             shape = RoundedCornerShape(20.dp),

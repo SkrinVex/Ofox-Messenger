@@ -3,7 +3,8 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
     <application
         android:allowBackup="true"
@@ -38,32 +39,6 @@
         <activity
             android:name=".PostsActivity"
             android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <!-- Telegram -->
-                <data android:scheme="tg" />
-                <data android:scheme="https" android:host="t.me" />
-                <data android:scheme="https" android:host="telegram.me" />
-                <!-- YouTube -->
-                <data android:scheme="youtube" />
-                <data android:scheme="https" android:host="www.youtube.com" />
-                <data android:scheme="https" android:host="youtu.be" />
-                <!-- TikTok -->
-                <data android:scheme="tiktok" />
-                <data android:scheme="https" android:host="www.tiktok.com" />
-                <!-- Twitter/X -->
-                <data android:scheme="twitter" />
-                <data android:scheme="https" android:host="twitter.com" />
-                <data android:scheme="https" android:host="x.com" />
-                <!-- Instagram -->
-                <data android:scheme="instagram" />
-                <data android:scheme="https" android:host="www.instagram.com" />
-                <!-- Facebook -->
-                <data android:scheme="fb" />
-                <data android:scheme="https" android:host="www.facebook.com" />
-            </intent-filter>
         </activity>
 
         <activity android:name=".ProfileEditActivity" />
@@ -73,6 +48,26 @@
         <activity android:name=".FriendsActivity" />
         <activity android:name=".ui.viewer.PhotoViewerActivity" />
         <activity android:name=".ChatActivity" />
+
+        <!-- Регистрация сервиса FCM -->
+        <service
+            android:name=".PushNotificationService"
+            android:exported="false"
+            android:directBootAware="true">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
+
+        <!-- Монохромная иконка для уведомлений по умолчанию -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_icon"
+            android:resource="@drawable/ic_notification" />
+
+        <!-- Цвет иконки (опционально, если хочешь указать дефолтный цвет) -->
+        <meta-data
+            android:name="com.google.firebase.messaging.default_notification_color"
+            android:resource="@color/brand_orange" />
     </application>
 
 </manifest>

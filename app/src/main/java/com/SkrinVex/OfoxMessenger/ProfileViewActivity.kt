@@ -25,6 +25,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -37,6 +39,7 @@ import com.SkrinVex.OfoxMessenger.network.ProfileCheckResponse
 import com.SkrinVex.OfoxMessenger.ui.common.enableInternetCheck
 import com.SkrinVex.OfoxMessenger.ui.theme.OfoxMessengerTheme
 import com.SkrinVex.OfoxMessenger.ui.viewer.PhotoViewerActivity
+import com.SkrinVex.OfoxMessenger.utils.CopyableText
 import com.SkrinVex.OfoxMessenger.utils.SmartLinkText
 import com.google.accompanist.systemuicontroller.rememberSystemUiController
 
@@ -380,10 +383,13 @@ fun ProfileHeader(
                             fontSize = 20.sp,
                             fontWeight = FontWeight.Bold
                         )
-                        Text(
-                            text = "${profile.username ?: "username"}",
-                            color = Color.Gray,
-                            fontSize = 14.sp
+                        CopyableText(
+                            text = AnnotatedString(profile.username ?: "username"),
+                            modifier = Modifier.padding(8.dp),
+                            style = TextStyle(
+                                color = Color.Gray,
+                                fontSize = 14.sp
+                            )
                         )
                         Spacer(Modifier.height(8.dp))
                         LinearProgressIndicator(

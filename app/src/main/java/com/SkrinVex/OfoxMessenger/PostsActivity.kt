@@ -297,6 +297,34 @@ fun PostsScreen(viewModel: PostsViewModel) {
                             )
                         }
                     }
+
+                    if (state.isLoadingMore) {
+                        item {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator(
+                                    color = Color(0xFFFF6B35),
+                                    strokeWidth = 4.dp
+                                )
+                            }
+                        }
+                    }
+                }
+
+                // Подгрузка постов при прокрутке до конца
+                LaunchedEffect(lazyListState) {
+                    snapshotFlow { lazyListState.layoutInfo }
+                        .collect { layoutInfo ->
+                            val lastVisibleItem = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                            val totalItems = layoutInfo.totalItemsCount
+                            if (lastVisibleItem >= totalItems - 1 && state.hasMorePosts && !state.isLoadingMore) {
+                                viewModel.loadRemainingPosts()
+                            }
+                        }
                 }
             }
         }
