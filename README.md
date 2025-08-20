@@ -20,17 +20,19 @@ Ofox Messenger — это современный мессенджер в сти�
 
 ## 📸 Скриншоты
 
-| Сплеш | Главная | Чат |
-|-------|---------|-----|
-| [![Сплеш](screenshots/splash.jpg)](screenshots/splash.jpg) | [![Главная](screenshots/home.jpg)](screenshots/home.jpg) | [![Чат](screenshots/chat.png)](screenshots/chat.png) |
+<details>
+  <summary><strong>Показать скриншоты (7)</strong></summary>
 
-| Лента | Комментарии | Профиль |
-|-------|-------------|---------|
-| [![Лента](screenshots/feed.jpg)](screenshots/feed.jpg) | [![Комментарии](screenshots/comments.jpg)](screenshots/comments.jpg) | [![Профиль](screenshots/profile.jpg)](screenshots/profile.jpg) |
-
-| Друзья |
-|--------|
-| [![Друзья](screenshots/friends.png)](screenshots/friends.png) |
+  <p align="center">
+    <img src="screenshots/splash.jpg" alt="Сплеш" width="230"/>
+    <img src="screenshots/home.jpg" alt="Главная" width="230"/>
+    <img src="screenshots/chat.png" alt="Чат" width="230"/>
+    <img src="screenshots/feed.jpg" alt="Лента" width="230"/>
+    <img src="screenshots/comments.jpg" alt="Комментарии" width="230"/>
+    <img src="screenshots/profile.jpg" alt="Профиль" width="230"/>
+    <img src="screenshots/friends.png" alt="Друзья" width="230"/>
+  </p>
+</details>
 
 ---
 
