@@ -294,8 +294,7 @@ fun ChatTopBar(
 
                 AsyncImage(
                     model = ImageRequest.Builder(LocalContext.current)
-                        .data(if (friendPhoto?.isNotBlank() == true)
-                            "https://api.skrinvex.su$friendPhoto" else null)
+                        .data(friendPhoto?.takeIf { it.isNotBlank() })
                         .fallback(android.R.drawable.ic_menu_gallery)
                         .error(android.R.drawable.ic_menu_gallery)
                         .build(),

@@ -263,15 +263,14 @@ fun UserHeaderCard(profile: ProfileCheckResponse, onClick: () -> Unit) {
                     .clip(CircleShape)
                     .background(Color(0xFF333333))
                     .clickable(enabled = !profile.profile_photo.isNullOrBlank()) {
-                        profile.profile_photo?.let { path ->
-                            val fullUrl = "https://api.skrinvex.su$path"
-                            PhotoViewerActivity.start(context, fullUrl)
+                        profile.profile_photo?.let { url ->
+                            PhotoViewerActivity.start(context, url)
                         }
                     },
                 contentAlignment = Alignment.Center
             ) {
                 AsyncImage(
-                    model = if (profile.profile_photo?.isNotBlank() == true) "https://api.skrinvex.su${profile.profile_photo}" else null,
+                    model = profile.profile_photo?.takeIf { it.isNotBlank() },
                     contentDescription = null,
                     modifier = Modifier.matchParentSize(),
                     contentScale = ContentScale.Crop,

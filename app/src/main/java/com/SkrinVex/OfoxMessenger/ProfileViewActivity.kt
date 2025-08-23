@@ -284,9 +284,8 @@ fun ProfileHeader(
                     .fillMaxWidth()
                     .height(160.dp)
                     .clickable(enabled = !profile.background_photo.isNullOrBlank()) {
-                        profile.background_photo?.let { path ->
-                            val fullUrl = "https://api.skrinvex.su$path"
-                            PhotoViewerActivity.start(context, fullUrl)
+                        profile.background_photo?.let { url ->
+                            PhotoViewerActivity.start(context, url)
                         }
                     }
             ) {
@@ -294,7 +293,7 @@ fun ProfileHeader(
                     var isBackgroundLoading by remember { mutableStateOf(true) }
                     AsyncImage(
                         model = ImageRequest.Builder(LocalContext.current)
-                            .data(if (url.isNotBlank()) "https://api.skrinvex.su$url" else null)
+                            .data(if (url.isNotBlank()) url else null)
                             .fallback(android.R.drawable.ic_menu_gallery)
                             .error(android.R.drawable.ic_menu_gallery)
                             .build(),
@@ -343,9 +342,8 @@ fun ProfileHeader(
                             .clip(CircleShape)
                             .background(Color(0xFF333333))
                             .clickable(enabled = !profile.profile_photo.isNullOrBlank()) {
-                                profile.profile_photo?.let { path ->
-                                    val fullUrl = "https://api.skrinvex.su$path"
-                                    PhotoViewerActivity.start(context, fullUrl)
+                                profile.profile_photo?.let { url ->
+                                    PhotoViewerActivity.start(context, url)
                                 }
                             },
                         contentAlignment = Alignment.Center
@@ -353,7 +351,7 @@ fun ProfileHeader(
                         var isProfilePhotoLoading by remember { mutableStateOf(true) }
                         AsyncImage(
                             model = ImageRequest.Builder(LocalContext.current)
-                                .data(if (profile.profile_photo?.isNotBlank() == true) "https://api.skrinvex.su${profile.profile_photo}" else null)
+                                .data(if (profile.profile_photo?.isNotBlank() == true) profile.profile_photo else null)
                                 .fallback(android.R.drawable.ic_menu_gallery)
                                 .error(android.R.drawable.ic_menu_gallery)
                                 .build(),
@@ -390,16 +388,6 @@ fun ProfileHeader(
                                 color = Color.Gray,
                                 fontSize = 14.sp
                             )
-                        )
-                        Spacer(Modifier.height(8.dp))
-                        LinearProgressIndicator(
-                            progress = (profile.profile_completion) / 100f,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .height(6.dp)
-                                .clip(CircleShape),
-                            color = Color(0xFFFF6B35),
-                            trackColor = Color(0xFF333333)
                         )
                     }
 

@@ -52,7 +52,7 @@ class CrashActivity : ComponentActivity() {
     }
 
     private fun openCrashSite() {
-        val url = "https://ofox.greenchat.kz/crash/"
+        val url = "https://ofox.skrinvex.su/crash/"
         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
         startActivity(intent)
     }

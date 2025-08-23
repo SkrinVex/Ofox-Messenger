@@ -1,11 +1,15 @@
 package com.SkrinVex.OfoxMessenger
 
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.FirebaseDatabase
 import com.SkrinVex.OfoxMessenger.network.ApiService
 import com.SkrinVex.OfoxMessenger.network.ImageUploadResponse
+import com.SkrinVex.OfoxMessenger.utils.ImageUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -18,6 +22,10 @@ import okhttp3.MultipartBody
 import okhttp3.RequestBody
 import java.io.File
 import java.io.Serializable
+import com.google.firebase.storage.FirebaseStorage
+import kotlinx.coroutines.tasks.await
+import java.io.ByteArrayOutputStream
+import java.io.FileOutputStream
 
 fun String.toRequestBodyOrNull(): RequestBody? =
     if (this.isNotBlank()) RequestBody.create("text/plain".toMediaTypeOrNull(), this) else null
@@ -135,41 +143,34 @@ class ProfileEditViewModel(private val uid: String) : ViewModel() {
             _state.value = _state.value.copy(isSaving = true, message = null)
             try {
                 val profileRef = FirebaseDatabase.getInstance().getReference("users/$uid")
+                val oldProfilePhotoUrl = _state.value.profile?.profile_photo
+                val oldBackgroundPhotoUrl = _state.value.profile?.background_photo
 
-                // Загрузка фотографий через ApiService (только если новые файлы выбраны)
                 var profilePhotoUrl: String? = null
                 var backgroundPhotoUrl: String? = null
 
+                // === Загружаем новое фото профиля ===
                 if (profilePhotoFile != null) {
-                    val response = apiService.uploadImage(
-                        image = profilePhotoFile.toMultipartBodyPart("image"),
-                        userId = uid.toRequestBodyOrNull()!!,
-                        type = "profile".toRequestBodyOrNull()!!
-                    )
-                    if (response.isSuccessful && response.body()?.success == true) {
-                        profilePhotoUrl = response.body()?.image_url
-                    } else {
-                        throw Exception(response.body()?.error ?: "Ошибка загрузки фото профиля")
-                    }
+                    val compressedProfileFile = ImageUtils.compressImageFile(profilePhotoFile, maxDimension = 1024)
+                    val storageRef = FirebaseStorage.getInstance().reference
+                        .child("users/$uid/profile_photo.jpg")
+                    storageRef.putFile(Uri.fromFile(compressedProfileFile)).await()
+                    profilePhotoUrl = storageRef.downloadUrl.await().toString()
+                    compressedProfileFile.delete()
                 }
 
+                // === Загружаем новое фото фона ===
                 if (backgroundPhotoFile != null) {
-                    val response = apiService.uploadImage(
-                        image = backgroundPhotoFile.toMultipartBodyPart("image"),
-                        userId = uid.toRequestBodyOrNull()!!,
-                        type = "background".toRequestBodyOrNull()!!
-                    )
-                    if (response.isSuccessful && response.body()?.success == true) {
-                        backgroundPhotoUrl = response.body()?.image_url
-                    } else {
-                        throw Exception(response.body()?.error ?: "Ошибка загрузки фонового фото")
-                    }
+                    val compressedBackgroundFile = ImageUtils.compressImageFile(backgroundPhotoFile, maxDimension = 1920)
+                    val storageRef = FirebaseStorage.getInstance().reference
+                        .child("users/$uid/background_photo.jpg")
+                    storageRef.putFile(Uri.fromFile(compressedBackgroundFile)).await()
+                    backgroundPhotoUrl = storageRef.downloadUrl.await().toString()
+                    compressedBackgroundFile.delete()
                 }
 
-                // Формируем только измененные данные профиля
+                // === Формируем данные для обновления ===
                 val updateData = mutableMapOf<String, Any?>()
-
-                // Обновляем только те поля, которые действительно изменились или были загружены новые фото
                 username?.takeIf { it.isNotBlank() && it != "@" && it != _state.value.profile?.username }?.let {
                     updateData["username"] = it
                 }
@@ -189,25 +190,34 @@ class ProfileEditViewModel(private val uid: String) : ViewModel() {
                     updateData["bio"] = it
                 }
 
-                // Обновляем фото только если были загружены новые
                 profilePhotoUrl?.let { updateData["profile_photo"] = it }
                 backgroundPhotoUrl?.let { updateData["background_photo"] = it }
 
-                // Если есть данные для обновления, обновляем их
                 if (updateData.isNotEmpty()) {
-                    // Используем updateChildren вместо setValue для частичного обновления
+                    // === Обновляем профиль ===
                     profileRef.updateChildren(updateData).await()
 
-                    // Пересчитываем процент заполненности только если были изменения
+                    // === Удаляем старые фото, если они отличаются ===
+                    if (profilePhotoUrl != null && oldProfilePhotoUrl != null && oldProfilePhotoUrl != profilePhotoUrl) {
+                        try {
+                            FirebaseStorage.getInstance().getReferenceFromUrl(oldProfilePhotoUrl).delete().await()
+                        } catch (_: Exception) { }
+                    }
+
+                    if (backgroundPhotoUrl != null && oldBackgroundPhotoUrl != null && oldBackgroundPhotoUrl != backgroundPhotoUrl) {
+                        try {
+                            FirebaseStorage.getInstance().getReferenceFromUrl(oldBackgroundPhotoUrl).delete().await()
+                        } catch (_: Exception) { }
+                    }
+
+                    // === Пересчёт процента заполненности ===
                     val currentSnapshot = profileRef.get().await()
                     val currentData = currentSnapshot.value as? Map<String, Any> ?: emptyMap()
                     val newCompletion = calculateProfileCompletion(currentData)
-
-                    // Обновляем процент заполненности отдельно
                     profileRef.child("profile_completion").setValue(newCompletion).await()
                 }
 
-                // Загружаем обновлённый профиль
+                // === Загружаем обновлённый профиль ===
                 val updatedSnapshot = profileRef.get().await()
                 val updatedProfileData = updatedSnapshot.value as? Map<String, Any>
                 val updatedProfile = if (updatedProfileData != null) {

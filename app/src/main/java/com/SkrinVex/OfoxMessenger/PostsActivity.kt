@@ -348,7 +348,7 @@ fun CreatePostDialog(
     onCreatePost: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(onDismissRequest = {}) {
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
@@ -492,7 +492,7 @@ fun EditPostDialog(
     onEditPost: () -> Unit,
     onDismiss: () -> Unit
 ) {
-    Dialog(onDismissRequest = onDismiss) {
+    Dialog(onDismissRequest = {}) {
         Card(
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
@@ -559,7 +559,7 @@ fun EditPostDialog(
                                     }
                             ) {
                                 AsyncImage(
-                                    model = "https://api.skrinvex.su$url",
+                                    model = url,
                                     contentDescription = "Существующее изображение ${index + 1}",
                                     modifier = Modifier.fillMaxSize(),
                                     contentScale = ContentScale.Crop
@@ -888,7 +888,7 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
                 }
             ) {
                 AsyncImage(
-                    model = post.profile_photo?.takeIf { it.isNotBlank() }?.let { "https://api.skrinvex.su$it" },
+                    model = post.profile_photo?.takeIf { it.isNotBlank() },
                     contentDescription = "Аватар",
                     modifier = Modifier
                         .size(40.dp)
@@ -959,7 +959,7 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
                         pageSpacing = 8.dp
                     ) { page ->
                         AsyncImage(
-                            model = "https://api.skrinvex.su${urls[page]}",
+                            model = urls[page],
                             contentDescription = "Изображение поста ${page + 1}",
                             contentScale = ContentScale.Crop,
                             onLoading = { isImageLoading = true },
@@ -968,7 +968,7 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
                             modifier = Modifier
                                 .fillMaxSize()
                                 .clickable {
-                                    PhotoViewerActivity.start(context, "https://api.skrinvex.su${urls[page]}")
+                                    PhotoViewerActivity.start(context, urls[page])
                                 }
                         )
                     }
@@ -1024,7 +1024,7 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
                 ) {
                     post.comments.take(3).forEach { comment ->
                         AsyncImage(
-                            model = comment.profile_photo?.takeIf { it.isNotBlank() }?.let { "https://api.skrinvex.su$it" },
+                            model = comment.profile_photo?.takeIf { it.isNotBlank() },
                             contentDescription = "Аватар комментатора",
                             modifier = Modifier
                                 .size(24.dp)
@@ -1382,7 +1382,7 @@ fun CommentItem(
             verticalAlignment = Alignment.Top
         ) {
             AsyncImage(
-                model = comment.profile_photo?.takeIf { it.isNotBlank() }?.let { "https://api.skrinvex.su$it" },
+                model = comment.profile_photo?.takeIf { it.isNotBlank() },
                 contentDescription = "Аватар комментатора",
                 modifier = Modifier
                     .size(32.dp)

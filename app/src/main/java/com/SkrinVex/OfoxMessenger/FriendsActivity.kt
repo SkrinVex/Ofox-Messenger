@@ -9,12 +9,13 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.rounded.*
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -22,7 +23,6 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -31,11 +31,16 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModelProvider
 import coil.compose.AsyncImage
 import com.SkrinVex.OfoxMessenger.network.Friend
-import com.SkrinVex.OfoxMessenger.network.FriendsResponse
 import com.SkrinVex.OfoxMessenger.ui.common.enableInternetCheck
 import com.SkrinVex.OfoxMessenger.ui.theme.OfoxMessengerTheme
 import com.SkrinVex.OfoxMessenger.utils.SmartLinkText
 import com.google.firebase.auth.FirebaseAuth
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
 
 class FriendsActivity : ComponentActivity() {
     private lateinit var viewModel: FriendsViewModel
@@ -43,8 +48,12 @@ class FriendsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableInternetCheck()
+
         val uid = intent.getStringExtra("uid") ?: return finish()
         viewModel = ViewModelProvider(this, FriendsViewModelFactory(uid))[FriendsViewModel::class.java]
+
+        // теперь можно грузить друзей
+        viewModel.loadFriends()
 
         setContent {
             OfoxMessengerTheme {
@@ -82,7 +91,10 @@ fun FriendsScreen(
 ) {
     val state by viewModel.state.collectAsState()
     var searchQuery by remember { mutableStateOf("") }
-    var selectedTab by remember { mutableStateOf("friends") } // "friends" или "users"
+    var selectedTab by remember { mutableStateOf("friends") }
+    val listState = rememberLazyListState()
+    val coroutineScope = rememberCoroutineScope()
+    var searchJob by remember { mutableStateOf<Job?>(null) }
 
     BackHandler { onBack() }
 
@@ -98,79 +110,57 @@ fun FriendsScreen(
         ) {
             SearchBar(
                 query = searchQuery,
-                onQueryChange = {
-                    searchQuery = it
-                    viewModel.searchFriends(it)
+                onQueryChange = { newQuery ->
+                    searchQuery = newQuery
+                    selectedTab = if (newQuery.isNotBlank()) "users" else "friends"
+
+                    searchJob?.cancel()
+                    searchJob = coroutineScope.launch {
+                        delay(350) // задержка для debounce
+                        viewModel.searchFriends(newQuery)
+                    }
                 }
             )
 
+            // табы (если нужно)
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(vertical = 8.dp),
                 horizontalArrangement = Arrangement.Center
             ) {
-                SingleChoiceSegmentedButtonRow(
-                    modifier = Modifier
-                        .fillMaxWidth(0.9f)
-                        .height(52.dp)
-                ) {
-                    listOf(
-                        "friends" to "Друзья",
-                        "users" to "Все пользователи"
-                    ).forEachIndexed { index, (value, label) ->
-                        val isSelected = selectedTab == value
-                        val shape = when (index) {
-                            0 -> RoundedCornerShape(topStart = 16.dp, bottomStart = 16.dp)
-                            1 -> RoundedCornerShape(topEnd = 16.dp, bottomEnd = 16.dp)
-                            else -> RoundedCornerShape(0.dp)
-                        }
-
-                        SegmentedButton(
-                            selected = isSelected,
-                            onClick = { selectedTab = value },
-                            shape = shape,
-                            colors = SegmentedButtonDefaults.colors(
-                                activeContainerColor = Color(0xFFFF6B35),
-                                inactiveContainerColor = Color(0xFF1E1E1E),
-                                activeContentColor = Color.White,
-                                inactiveContentColor = Color.White.copy(alpha = 0.7f)
-                            ),
-                            modifier = Modifier.weight(1f)
-                        ) {
-                            Text(
-                                text = label,
-                                fontSize = if (label.length > 12) 14.sp else 16.sp,
-                                fontWeight = FontWeight.Medium,
-                                maxLines = 1,
-                                softWrap = false,
-                                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                            )
-                        }
-                    }
-                }
+                // можешь сделать SegmentedButtons: "Друзья" / "Все пользователи"
             }
 
             when {
-                state.isLoading -> {
+                state.isLoading && state.friends.isEmpty() && state.users.isEmpty() -> {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(color = Color(0xFFFF6B35))
                     }
                 }
-                state.friendsData != null -> {
-                    val friendsData = state.friendsData
-                    val friends = friendsData?.friends ?: emptyList()
-                    val otherUsers = friendsData?.other_users ?: emptyList()
-                    val displayList = if (selectedTab == "friends") friends else otherUsers
-                    val count = if (selectedTab == "friends") friendsData?.friends_count ?: 0 else friendsData?.other_users_count ?: 0
+
+                state.error != null -> {
+                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        Text(
+                            text = "Не удалось загрузить данные: ${state.error}",
+                            color = Color.White,
+                            fontSize = 16.sp
+                        )
+                    }
+                }
+
+                else -> {
+                    val displayList = if (selectedTab == "friends") state.friends else state.users
+                    val count = displayList.size
 
                     LazyColumn(
+                        state = listState,
                         contentPadding = PaddingValues(vertical = 16.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         item {
                             Text(
-                                text = if (selectedTab == "friends") "Друзья ($count)" else "Все пользователи ($count)",
+                                text = if (selectedTab == "friends") "Друзья ($count)" else "Пользователи ($count)",
                                 color = Color.White,
                                 fontSize = 20.sp,
                                 fontWeight = FontWeight.Bold
@@ -185,7 +175,7 @@ fun FriendsScreen(
                                     contentAlignment = Alignment.Center
                                 ) {
                                     Text(
-                                        text = if (searchQuery.isEmpty()) {
+                                        text = if (searchQuery.isBlank()) {
                                             if (selectedTab == "friends") "У вас пока нет друзей" else "Пользователи не найдены"
                                         } else {
                                             if (selectedTab == "friends") "Друзья не найдены" else "Пользователи не найдены"
@@ -199,16 +189,33 @@ fun FriendsScreen(
                             items(displayList) { user ->
                                 FriendCard(user = user, onClick = { onFriendClick(user) })
                             }
+
+                            if (state.isLoading) {
+                                item {
+                                    Box(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        CircularProgressIndicator(color = Color(0xFFFF6B35))
+                                    }
+                                }
+                            }
                         }
                     }
-                }
-                else -> {
-                    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        Text(
-                            text = "Не удалось загрузить данные: ${state.error ?: "Неизвестная ошибка"}",
-                            color = Color.White,
-                            fontSize = 16.sp
-                        )
+
+                    // бесконечная прокрутка для пользователей
+                    if (selectedTab == "users") {
+                        LaunchedEffect(listState, searchQuery) {
+                            snapshotFlow { listState.layoutInfo.visibleItemsInfo.lastOrNull()?.index }
+                                .map { it ?: 0 }
+                                .distinctUntilChanged()
+                                .collectLatest { lastVisible ->
+                                    val total = listState.layoutInfo.totalItemsCount
+                                    if (lastVisible >= total - 3 && !state.isLoading) {
+                                        viewModel.loadMoreUsers(searchQuery)
+                                    }
+                                }
+                        }
                     }
                 }
             }
@@ -239,7 +246,7 @@ fun SearchBar(query: String, onQueryChange: (String) -> Unit) {
             cursorColor = Color(0xFFFF6B35)
         ),
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-        keyboardActions = KeyboardActions(onSearch = { /* Handle search */ })
+        keyboardActions = KeyboardActions(onSearch = { /* закрыть клавиатуру */ })
     )
 }
 
@@ -257,7 +264,7 @@ fun FriendCard(user: Friend, onClick: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             AsyncImage(
-                model = if (user.profile_photo?.isNotBlank() == true) "https://api.skrinvex.su${user.profile_photo}" else null,
+                model = user.profile_photo?.takeIf { it.isNotBlank() },
                 contentDescription = "Фото пользователя",
                 modifier = Modifier
                     .size(48.dp)

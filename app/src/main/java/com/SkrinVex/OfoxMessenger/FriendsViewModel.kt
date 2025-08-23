@@ -17,15 +17,21 @@ import kotlinx.coroutines.tasks.await
 
 data class FriendsViewState(
     val isLoading: Boolean = false,
-    val friendsData: FriendsResponse? = null,
+    val friends: List<Friend> = emptyList(),
+    val users: List<Friend> = emptyList(),
     val error: String? = null
 )
 
 class FriendsViewModel(private val uid: String) : ViewModel() {
     private val _state = MutableStateFlow(FriendsViewState())
     val state: StateFlow<FriendsViewState> = _state.asStateFlow()
+
     private var friendsListener: ValueEventListener? = null
     private val apiService: ApiService = ApiService.create()
+
+    // для постраничной загрузки
+    private var lastKey: String? = null
+    private var searchMode = false
 
     init {
         setupFriendsListener()
@@ -33,7 +39,7 @@ class FriendsViewModel(private val uid: String) : ViewModel() {
 
     fun loadFriends(searchQuery: String? = null) {
         viewModelScope.launch {
-            _state.value = FriendsViewState(isLoading = true)
+            _state.value = _state.value.copy(isLoading = true)
 
             val user = FirebaseAuth.getInstance().currentUser
             if (user == null) {
@@ -45,17 +51,15 @@ class FriendsViewModel(private val uid: String) : ViewModel() {
                 val db = FirebaseDatabase.getInstance()
                 val indicator = object : GenericTypeIndicator<Map<String, Any>>() {}
 
-                // Загружаем друзей
                 val friendSnapshot = db.getReference("users/$uid/friends").get().await()
                 val friendsList = mutableListOf<Friend>()
+
                 if (friendSnapshot.exists()) {
                     for (fs in friendSnapshot.children) {
                         val fdata = fs.getValue(indicator)
                         if (fdata?.get("status") == "friends") {
                             val friendUid = fs.key
                             val friend = userProfileFetch(friendUid)
-
-                            // Пропускаем, если скрыт
                             if (friend != null && !shouldHideUser(friendUid)) {
                                 if (searchQuery.isNullOrBlank() ||
                                     friend.nickname?.contains(searchQuery, true) == true ||
@@ -68,19 +72,79 @@ class FriendsViewModel(private val uid: String) : ViewModel() {
                     }
                 }
 
-                // Загружаем всех пользователей
-                val usersSnap = db.getReference("users").get().await()
-                val otherUsers = usersSnap.children.mapNotNull { userSnap ->
-                    val uid2 = userSnap.key ?: return@mapNotNull null
-                    if (uid2 == uid) return@mapNotNull null
-                    if (friendsList.any { it.id == uid2 }) return@mapNotNull null
+                // --- Если это поиск и друзей не нашли, включаем поиск по пользователям ---
+                if (!searchQuery.isNullOrBlank()) {
+                    if (friendsList.isNotEmpty()) {
+                        // нашли среди друзей — показываем их
+                        searchMode = false
+                        _state.value = FriendsViewState(
+                            friends = friendsList,
+                            users = emptyList(),
+                            isLoading = false
+                        )
+                    } else {
+                        // среди друзей нет — идем в поиск по пользователям
+                        searchMode = true
+                        lastKey = null
+                        _state.value = FriendsViewState(
+                            friends = emptyList(),
+                            users = emptyList(),
+                            isLoading = true
+                        )
+                        loadMoreUsers(searchQuery)
+                    }
+                } else {
+                    // обычный режим без поиска
+                    searchMode = false
+                    _state.value = FriendsViewState(
+                        friends = friendsList,
+                        users = emptyList(),
+                        isLoading = false
+                    )
+                }
 
-                    val m = userSnap.getValue(indicator) ?: return@mapNotNull null
+            } catch (e: Exception) {
+                val msg = when {
+                    e.message?.contains("Permission denied") == true ->
+                        "Нет доступа к данным"
+                    e.message?.contains("Network") == true ->
+                        "Проблемы сети"
+                    else -> "Ошибка: ${e.message}"
+                }
+                Log.e("FriendsVM", msg, e)
+                _state.value = FriendsViewState(error = msg)
+            }
+        }
+    }
 
-                    // Пропускаем если email пустой или is_disabled = true
+    fun loadMoreUsers(searchQuery: String? = null) {
+        viewModelScope.launch {
+            try {
+                val db = FirebaseDatabase.getInstance()
+                val usersRef = db.getReference("users")
+                val indicator = object : GenericTypeIndicator<Map<String, Any>>() {}
+                val chunkSize = 30
+
+                val query = if (lastKey == null) {
+                    usersRef.orderByKey().limitToFirst(chunkSize)
+                } else {
+                    usersRef.orderByKey().startAfter(lastKey!!).limitToFirst(chunkSize)
+                }
+
+                val snap = query.get().await()
+                if (!snap.exists()) return@launch
+
+                val newUsers = mutableListOf<Friend>()
+                for (userSnap in snap.children) {
+                    lastKey = userSnap.key
+                    val uid2 = userSnap.key ?: continue
+                    if (uid2 == uid) continue
+                    if (_state.value.friends.any { it.id == uid2 }) continue
+
+                    val m = userSnap.getValue(indicator) ?: continue
                     val email = m["email"] as? String?
                     val isDisabled = m["is_disabled"] as? Boolean ?: false
-                    if (email.isNullOrBlank() || isDisabled) return@mapNotNull null
+                    if (email.isNullOrBlank() || isDisabled) continue
 
                     val u = Friend(
                         id = uid2,
@@ -89,33 +153,20 @@ class FriendsViewModel(private val uid: String) : ViewModel() {
                         status = m["status"] as? String,
                         profile_photo = m["profile_photo"] as? String
                     )
+
                     if (searchQuery.isNullOrBlank() ||
                         u.nickname?.contains(searchQuery, true) == true ||
                         u.username.contains(searchQuery, true)
-                    ) u else null
+                    ) newUsers.add(u)
                 }
 
-                _state.value = FriendsViewState(
-                    friendsData = FriendsResponse(
-                        success = true,
-                        friends = friendsList,
-                        friends_count = friendsList.size,
-                        other_users = otherUsers,
-                        other_users_count = otherUsers.size
-                    )
+                val allUsers = _state.value.users + newUsers
+                _state.value = _state.value.copy(
+                    users = allUsers,
+                    isLoading = false
                 )
-
             } catch (e: Exception) {
-                val msg = when {
-                    e.message?.contains("Permission denied") == true ->
-                        "Нет доступа к данным — проверьте права или авторизацию"
-                    e.message?.contains("Network") == true ->
-                        "Проблемы сети. Попробуйте позже"
-                    else ->
-                        "Ошибка: ${e.message}"
-                }
-                Log.e("FriendsVM", msg, e)
-                _state.value = FriendsViewState(error = msg)
+                Log.e("FriendsVM", "loadMoreUsers error: ${e.message}")
             }
         }
     }
@@ -133,7 +184,7 @@ class FriendsViewModel(private val uid: String) : ViewModel() {
             email.isNullOrBlank() || isDisabled
         } catch (e: Exception) {
             Log.e("FriendsVM", "Ошибка при проверке is_disabled/email: ${e.message}")
-            true // лучше спрятать в случае ошибки
+            true
         }
     }
 
@@ -162,7 +213,7 @@ class FriendsViewModel(private val uid: String) : ViewModel() {
         }
         friendsListener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
-                loadFriends()
+                if (!searchMode) loadFriends()
             }
 
             override fun onCancelled(error: DatabaseError) {

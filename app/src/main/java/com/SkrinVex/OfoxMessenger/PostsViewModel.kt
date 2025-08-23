@@ -10,10 +10,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import com.SkrinVex.OfoxMessenger.network.ApiService
+import com.SkrinVex.OfoxMessenger.utils.ImageUtils
 import com.google.firebase.database.DataSnapshot
 import com.google.firebase.database.DatabaseError
 import com.google.firebase.database.FirebaseDatabase
 import com.google.firebase.database.ValueEventListener
+import com.google.firebase.storage.FirebaseStorage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -428,6 +430,7 @@ class PostsViewModel(private val uid: String) : ViewModel() {
 
     fun createPost(title: String, content: String, imageUris: List<Uri>, context: Context, onComplete: (Boolean, String) -> Unit) {
         viewModelScope.launch {
+            val imageUrls = mutableListOf<String>()
             try {
                 Log.d(TAG, "Создание поста с заголовком: $title, содержимым: $content, изображениями: ${imageUris.size}")
                 if (imageUris.size > 5) {
@@ -435,29 +438,23 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                 }
                 val postId = FirebaseDatabase.getInstance().getReference("posts").push().key
                     ?: return@launch onComplete(false, "Ошибка создания ID поста")
-                val imageUrls = mutableListOf<String>()
 
+                // Загружаем изображения
                 for (uri in imageUris) {
                     val file = uriToFile(context, uri)
                     if (file == null) {
                         Log.e(TAG, "Не удалось преобразовать Uri в File: $uri")
                         return@launch onComplete(false, "Ошибка обработки изображения")
                     }
-                    val requestFile = file.asRequestBody("image/*".toMediaTypeOrNull())
-                    val imagePart = MultipartBody.Part.createFormData("image", file.name, requestFile)
-                    val userId = uid.toRequestBody("text/plain".toMediaTypeOrNull())
-                    val type = "post_image".toRequestBody("text/plain".toMediaTypeOrNull())
-
-                    Log.d(TAG, "Загрузка изображения для поста: $postId, uri: $uri")
-                    val response = apiService.uploadImage(imagePart, userId, type)
-                    if (response.isSuccessful && response.body()?.success == true) {
-                        response.body()?.image_url?.let { imageUrls.add(it) }
-                        Log.d(TAG, "Изображение загружено успешно: ${response.body()?.image_url}")
-                    } else {
-                        val errorMsg = response.body()?.error ?: "Неизвестная ошибка"
-                        Log.e(TAG, "Загрузка изображения не удалась: $errorMsg, Код: ${response.code()}")
-                        return@launch onComplete(false, errorMsg)
-                    }
+                    val compressedFile = ImageUtils.compressImageFile(file, quality = 80, maxDimension = 1024)
+                    val storageRef = FirebaseStorage.getInstance().reference
+                        .child("posts/$postId/image_${System.currentTimeMillis()}.jpg")
+                    storageRef.putFile(Uri.fromFile(compressedFile)).await()
+                    val imageUrl = storageRef.downloadUrl.await().toString()
+                    imageUrls.add(imageUrl)
+                    compressedFile.delete()
+                    file.delete()
+                    Log.d(TAG, "Изображение загружено успешно: $imageUrl")
                 }
 
                 val post = mapOf(
@@ -469,13 +466,21 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                     "is_edited" to false
                 )
 
-                Log.d(TAG, "Сохранение поста в Firebase: $postId")
-                FirebaseDatabase.getInstance()
-                    .getReference("posts/$postId")
-                    .setValue(post)
-                    .await()
+                try {
+                    FirebaseDatabase.getInstance()
+                        .getReference("posts/$postId")
+                        .setValue(post)
+                        .await()
+                } catch (e: Exception) {
+                    // Откат: удаляем загруженные изображения
+                    for (url in imageUrls) {
+                        try {
+                            FirebaseStorage.getInstance().getReferenceFromUrl(url).delete().await()
+                        } catch (_: Exception) {}
+                    }
+                    throw e
+                }
 
-                // Отправляем уведомления об упоминаниях
                 val mentions = extractMentions(content)
                 for (mention in mentions) {
                     val mentionedUid = getUidByUsername(mention.removePrefix("@"))
@@ -492,7 +497,6 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                                     "message" to "$mention, вас упомянули в посте"
                                 )
                             ).await()
-                        Log.d(TAG, "Уведомление отправлено для $mention (uid: $mentionedUid)")
                     }
                 }
 
@@ -520,7 +524,6 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                 )
                 _state.value = _state.value.copy(posts = (_state.value.posts + newPost).sortedByDescending { it.created_at })
 
-                Log.d(TAG, "Пост создан успешно: $postId")
                 onComplete(true, "Пост создан успешно")
             } catch (e: Exception) {
                 Log.e(TAG, "Ошибка создания поста: ${e.message}", e)
@@ -532,7 +535,7 @@ class PostsViewModel(private val uid: String) : ViewModel() {
     fun editPost(postId: String, title: String?, content: String?, newImageUris: List<Uri>, existingImageUrls: List<String>, context: Context, onComplete: (Boolean, String) -> Unit) {
         viewModelScope.launch {
             try {
-                Log.d(TAG, "Editing, title: $title, content: $content, newImageUris: ${newImageUris.size}, existingImageUrls: ${existingImageUrls.size}")
+                Log.d(TAG, "Редактирование поста: $postId, заголовок: $title, содержимое: $content, новые изображения: ${newImageUris.size}, существующие URL: ${existingImageUrls.size}")
                 if (newImageUris.size + existingImageUrls.size > 5) {
                     return@launch onComplete(false, "Максимум 5 изображений")
                 }
@@ -545,83 +548,59 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                 for (uri in newImageUris) {
                     val file = uriToFile(context, uri)
                     if (file == null) {
-                        Log.e(TAG, "Failed to convert Uri to File: $uri")
                         return@launch onComplete(false, "Ошибка обработки изображения")
                     }
-                    val requestFile = file.asRequestBody("image/*".toMediaTypeOrNull())
-                    val imagePart = MultipartBody.Part.createFormData("image", file.name, requestFile)
-                    val userId = uid.toRequestBody("text/plain".toMediaTypeOrNull())
-                    val type = "post_image".toRequestBody("text/plain".toMediaTypeOrNull())
-
-                    Log.d(TAG, "Uploading new image for post: $postId, uri: $uri")
-                    val response = apiService.uploadImage(imagePart, userId, type)
-                    if (response.isSuccessful && response.body()?.success == true) {
-                        response.body()?.image_url?.let { imageUrls.add(it) }
-                        Log.d(TAG, "Image uploaded successfully: ${response.body()?.image_url}")
-                    } else {
-                        val errorMsg = response.body()?.error ?: "Unknown error"
-                        Log.e(TAG, "Image upload failed: $errorMsg, Code: ${response.code()}")
-                        return@launch onComplete(false, errorMsg)
-                    }
-                }
-                if (imageUrls.isNotEmpty()) {
-                    updates["image_urls"] = imageUrls
-                } else {
-                    updates["image_urls"] = null
+                    val compressedFile = ImageUtils.compressImageFile(file, quality = 80, maxDimension = 1024)
+                    val storageRef = FirebaseStorage.getInstance().reference
+                        .child("posts/$postId/image_${System.currentTimeMillis()}.jpg")
+                    storageRef.putFile(Uri.fromFile(compressedFile)).await()
+                    val imageUrl = storageRef.downloadUrl.await().toString()
+                    imageUrls.add(imageUrl)
+                    compressedFile.delete()
+                    file.delete()
                 }
 
-                if (updates.isNotEmpty()) {
-                    Log.d(TAG, "Updating post in Firebase: $postId, updates: $updates")
-                    FirebaseDatabase.getInstance()
-                        .getReference("posts/$postId")
-                        .updateChildren(updates)
-                        .await()
+                val postRef = FirebaseDatabase.getInstance().getReference("posts/$postId")
+                val postSnapshot = postRef.get().await()
+                val postData = postSnapshot.value as? Map<String, Any>
+                val previousImageUrls = (postData?.get("image_urls") as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
 
-                    // Отправляем уведомления об упоминаниях, если содержимое обновлено
-                    content?.let { newContent ->
-                        val mentions = extractMentions(newContent)
-                        for (mention in mentions) {
-                            val mentionedUid = getUidByUsername(mention.removePrefix("@"))
-                            if (mentionedUid != null && mentionedUid != uid) {
-                                val notificationId = UUID.randomUUID().toString()
-                                FirebaseDatabase.getInstance()
-                                    .getReference("users/$mentionedUid/notifications/$notificationId")
-                                    .setValue(
-                                        mapOf(
-                                            "type" to "mention",
-                                            "from_uid" to uid,
-                                            "post_id" to postId,
-                                            "timestamp" to System.currentTimeMillis(),
-                                            "message" to "$mention, вас упомянули в отредактированном посте"
-                                        )
-                                    ).await()
-                                Log.d(TAG, "Уведомление отправлено для $mention (uid: $mentionedUid)")
-                            }
-                        }
-                    }
+                val urlsToDelete = previousImageUrls.filter { !imageUrls.contains(it) }
 
-                    val updatedPosts = _state.value.posts.map { post ->
-                        if (post.id == postId) {
-                            post.copy(
-                                title = title ?: post.title,
-                                content = content ?: post.content,
-                                image_urls = if (imageUrls.isNotEmpty()) imageUrls else null,
-                                is_edited = true
-                            )
-                        } else {
-                            post
-                        }
-                    }
-                    _state.value = _state.value.copy(posts = updatedPosts)
+                updates["image_urls"] = if (imageUrls.isNotEmpty()) imageUrls else null
 
-                    Log.d(TAG, "Post updated successfully: $postId")
-                    onComplete(true, "Пост изменён успешно")
-                } else {
-                    Log.d(TAG, "No changes to update for post: $postId")
-                    onComplete(true, "Изменений не внесено")
+                postRef.updateChildren(updates).await()
+
+                // Удаляем неиспользуемые изображения только после успешного обновления
+                for (url in urlsToDelete) {
+                    try {
+                        FirebaseStorage.getInstance().getReferenceFromUrl(url).delete().await()
+                    } catch (_: Exception) {}
                 }
+
+                if (imageUrls.isEmpty()) {
+                    val storageDirRef = FirebaseStorage.getInstance().getReference("posts/$postId")
+                    val listResult = storageDirRef.listAll().await()
+                    for (fileRef in listResult.items) {
+                        try { fileRef.delete().await() } catch (_: Exception) {}
+                    }
+                }
+
+                val updatedPosts = _state.value.posts.map { post ->
+                    if (post.id == postId) {
+                        post.copy(
+                            title = title ?: post.title,
+                            content = content ?: post.content,
+                            image_urls = if (imageUrls.isNotEmpty()) imageUrls else null,
+                            is_edited = true
+                        )
+                    } else post
+                }
+                _state.value = _state.value.copy(posts = updatedPosts)
+
+                onComplete(true, "Пост изменён успешно")
             } catch (e: Exception) {
-                Log.e(TAG, "Error updating post: ${e.message}", e)
+                Log.e(TAG, "Ошибка обновления поста: ${e.message}", e)
                 onComplete(false, "Ошибка изменения поста: ${e.message}")
             }
         }
@@ -630,20 +609,32 @@ class PostsViewModel(private val uid: String) : ViewModel() {
     fun deletePost(postId: String, onComplete: (Boolean, String) -> Unit) {
         viewModelScope.launch {
             try {
-                Log.d(TAG, "Deleting post: $postId")
-                FirebaseDatabase.getInstance()
-                    .getReference("posts/$postId")
-                    .removeValue()
-                    .await()
+                val postRef = FirebaseDatabase.getInstance().getReference("posts/$postId")
+                val postSnapshot = postRef.get().await()
+                val postData = postSnapshot.value as? Map<String, Any>
+                val imageUrls = (postData?.get("image_urls") as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
 
-                // Удаляем пост из состояния
+                try {
+                    val storageDirRef = FirebaseStorage.getInstance().getReference("posts/$postId")
+                    val listResult = storageDirRef.listAll().await()
+                    for (fileRef in listResult.items) {
+                        try { fileRef.delete().await() } catch (_: Exception) {}
+                    }
+                } catch (e: Exception) {
+                    // Fallback — удаляем по URL
+                    for (url in imageUrls) {
+                        try { FirebaseStorage.getInstance().getReferenceFromUrl(url).delete().await() } catch (_: Exception) {}
+                    }
+                }
+
+                postRef.removeValue().await()
+
                 val updatedPosts = _state.value.posts.filter { it.id != postId }
                 _state.value = _state.value.copy(posts = updatedPosts)
 
-                Log.d(TAG, "Post deleted successfully: $postId")
                 onComplete(true, "Пост удалён успешно")
             } catch (e: Exception) {
-                Log.e(TAG, "Error deleting post: ${e.message}", e)
+                Log.e(TAG, "Ошибка удаления поста: ${e.message}", e)
                 onComplete(false, "Ошибка удаления поста: ${e.message}")
             }
         }
@@ -752,61 +743,53 @@ class PostsViewModel(private val uid: String) : ViewModel() {
         }
         postsListener = object : ValueEventListener {
             override fun onDataChange(snapshot: DataSnapshot) {
-                // Не перезагружаем все данные, а обновляем только изменённые посты
                 viewModelScope.launch {
                     try {
-                        val currentPosts = _state.value.posts.associateBy { it.id }
-                        val updatedPosts = mutableListOf<PostItem>()
+                        // Берём текущий список постов
+                        val currentPosts = _state.value.posts.toMutableList()
+
+                        // Собираем ID постов, которые реально пришли из Firebase
+                        val firebaseIds = snapshot.children.mapNotNull { it.key }.toSet()
+
                         snapshot.children.forEach { child ->
-                            val map = child.value as? Map<String, Any> ?: return@forEach
                             val postId = child.key ?: return@forEach
-                            val existingPost = currentPosts[postId]
-                            if (existingPost != null) {
-                                val reactionsSnapshot = withContext(Dispatchers.IO) {
-                                    FirebaseDatabase.getInstance()
-                                        .getReference("posts/$postId/reactions")
-                                        .get()
-                                        .await()
-                                }
-                                val reactions = reactionsSnapshot.children.associate { it.key!! to it.getValue(String::class.java) }
-                                val userReaction = reactions[uid]
-                                val commentsSnapshot = withContext(Dispatchers.IO) {
-                                    FirebaseDatabase.getInstance()
-                                        .getReference("posts/$postId/comments")
-                                        .get()
-                                        .await()
-                                }
-                                val comments = commentsSnapshot.children.mapNotNull { commentChild ->
-                                    val commentMap = commentChild.value as? Map<String, Any>
-                                    commentMap?.let {
-                                        val commentUserSnapshot = withContext(Dispatchers.IO) {
-                                            FirebaseDatabase.getInstance()
-                                                .getReference("users/${it["user_id"]}")
-                                                .get()
-                                                .await()
-                                        }
-                                        val commentUserData = commentUserSnapshot.value as? Map<String, Any>
-                                        CommentItem(
-                                            id = commentChild.key ?: "",
-                                            user_id = it["user_id"] as? String ?: "",
-                                            username = commentUserData?.get("username") as? String,
-                                            nickname = commentUserData?.get("nickname") as? String,
-                                            profile_photo = commentUserData?.get("profile_photo") as? String,
-                                            content = it["content"] as? String ?: "",
-                                            created_at = it["created_at"] as? String ?: ""
-                                        )
-                                    }
-                                }
-                                updatedPosts.add(
-                                    existingPost.copy(
-                                        comments = comments,
-                                        likes = reactions,
-                                        userReaction = userReaction
-                                    )
+                            val map = child.value as? Map<String, Any> ?: return@forEach
+
+                            // Проверяем, есть ли уже этот пост в ленте
+                            val existingIndex = currentPosts.indexOfFirst { it.id == postId }
+
+                            // Создаём обновлённый/новый пост
+                            val updatedPost = if (existingIndex >= 0) {
+                                val existingPost = currentPosts[existingIndex]
+                                existingPost.copy(
+                                    title = map["title"] as? String ?: existingPost.title,
+                                    content = map["content"] as? String ?: existingPost.content,
+                                    image_urls = (map["image_urls"] as? List<*>)?.mapNotNull { it as? String }
+                                        ?: existingPost.image_urls,
+                                    is_edited = map["is_edited"] as? Boolean ?: existingPost.is_edited,
+                                    created_at = map["created_at"] as? String ?: existingPost.created_at
                                 )
+                            } else {
+                                processPostSnapshot(child, map)
+                            }
+
+                            // Добавляем или обновляем
+                            if (updatedPost != null) {
+                                if (existingIndex >= 0) {
+                                    currentPosts[existingIndex] = updatedPost
+                                } else {
+                                    currentPosts.add(updatedPost)
+                                }
                             }
                         }
-                        _state.value = _state.value.copy(posts = updatedPosts.sortedByDescending { it.created_at })
+
+                        // Удаляем посты, которых больше нет в Firebase
+                        currentPosts.removeAll { it.id !in firebaseIds }
+
+                        // Обновляем состояние
+                        _state.value = _state.value.copy(
+                            posts = currentPosts.sortedByDescending { it.created_at }
+                        )
                     } catch (e: Exception) {
                         Log.e(TAG, "Error in posts listener: ${e.message}", e)
                     }

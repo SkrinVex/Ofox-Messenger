@@ -179,7 +179,7 @@ fun ProfileEditScreen(uid: String) {
                                         profilePhotoUri.toString()
                                     }
                                     state.profile?.profile_photo?.isNotBlank() == true -> {
-                                        val url = "https://api.skrinvex.su${state.profile?.profile_photo}"
+                                        val url = state.profile?.profile_photo
                                         android.util.Log.d("ProfileEditScreen", "Using server profile photo URL: $url")
                                         url
                                     }
@@ -245,7 +245,7 @@ fun ProfileEditScreen(uid: String) {
                                         backgroundPhotoUri.toString()
                                     }
                                     state.profile?.background_photo?.isNotBlank() == true -> {
-                                        val url = "https://api.skrinvex.su${state.profile?.background_photo}"
+                                        val url = state.profile?.background_photo
                                         android.util.Log.d("ProfileEditScreen", "Using server background photo URL: $url")
                                         url
                                     }
