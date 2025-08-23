@@ -134,8 +134,17 @@ private class WeakInternetOverlay(activity: ComponentActivity) {
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onCapabilitiesChanged(network: Network, nc: NetworkCapabilities) {
+            // Проверка: есть ли валидный интернет
+            val validated = nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+
+            // Скорость в Kbps (среднее значение вниз/вверх)
             val bandwidth = (nc.linkDownstreamBandwidthKbps + nc.linkUpstreamBandwidthKbps) / 2
-            val weak = bandwidth in 1..150
+
+            // Считаем интернет слабым если:
+            // 1) интернет валидный
+            // 2) скорость меньше 1000 Kbps (1 Мбит/с)
+            val weak = validated && bandwidth in 1..1000
+
             if (weak != isWeak) {
                 isWeak = weak
                 handler.post { updateBanner() }
@@ -188,9 +197,10 @@ private class WeakInternetOverlay(activity: ComponentActivity) {
 private fun WeakInternetBanner(isWeakProvider: () -> Boolean) {
     var visible by remember { mutableStateOf(isWeakProvider()) }
     var offset by remember { mutableStateOf(Offset(0f, 0f)) }
+    var dismissed by remember { mutableStateOf(false) }
 
     LaunchedEffect(isWeakProvider()) {
-        visible = isWeakProvider()
+        visible = isWeakProvider() && !dismissed
     }
 
     AnimatedVisibility(
@@ -200,6 +210,8 @@ private fun WeakInternetBanner(isWeakProvider: () -> Boolean) {
     ) {
         Box(
             modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 16.dp, end = 16.dp, bottom = 80.dp)
                 .offset { androidx.compose.ui.unit.IntOffset(offset.x.toInt(), offset.y.toInt()) }
                 .pointerInput(Unit) {
                     detectDragGestures { _, dragAmount ->
@@ -207,14 +219,23 @@ private fun WeakInternetBanner(isWeakProvider: () -> Boolean) {
                     }
                 }
                 .background(Color(0xFFFFA726), RoundedCornerShape(12.dp))
-                .padding(horizontal = 20.dp, vertical = 12.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
-            Text(
-                text = "Слабое подключение",
-                color = Color.Black,
-                fontSize = 14.sp,
-                fontWeight = FontWeight.Bold
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(
+                    text = "Слабое подключение",
+                    color = Color.Black,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                TextButton(onClick = { dismissed = true }) {
+                    Text("Закрыть", color = Color.Black, fontSize = 12.sp)
+                }
+            }
         }
     }
 }

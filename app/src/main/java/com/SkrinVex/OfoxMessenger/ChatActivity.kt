@@ -46,6 +46,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.SkrinVex.OfoxMessenger.ui.common.enableInternetCheck
 import com.SkrinVex.OfoxMessenger.ui.theme.OfoxMessengerTheme
 import com.SkrinVex.OfoxMessenger.utils.SmartLinkText
 import com.google.accompanist.systemuicontroller.rememberSystemUiController
@@ -58,6 +59,7 @@ import java.util.*
 class ChatActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableInternetCheck()
 
         // Настройка для правильного поведения с клавиатурой
         WindowCompat.setDecorFitsSystemWindows(window, false)

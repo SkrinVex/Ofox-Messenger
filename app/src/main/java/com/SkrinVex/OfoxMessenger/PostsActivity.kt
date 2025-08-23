@@ -60,6 +60,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.core.graphics.drawable.toBitmap
+import com.SkrinVex.OfoxMessenger.ui.common.enableInternetCheck
 import com.SkrinVex.OfoxMessenger.utils.SmartLinkText
 import kotlinx.coroutines.delay
 import java.util.regex.Pattern
@@ -67,6 +68,7 @@ import java.util.regex.Pattern
 class PostsActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        enableInternetCheck()
         val uid = intent.getStringExtra("uid") ?: ""
         val viewModel: PostsViewModel by viewModels {
             PostsViewModelFactory(uid)
