@@ -296,9 +296,11 @@ fun ProfileHeader(
                             .data(if (url.isNotBlank()) url else null)
                             .fallback(android.R.drawable.ic_menu_gallery)
                             .error(android.R.drawable.ic_menu_gallery)
+                            .diskCacheKey(url) // 👈 ключ для дискового кэша
+                            .memoryCacheKey(url) // 👈 ключ для RAM-кэша
                             .build(),
                         contentDescription = "Фон профиля",
-                        imageLoader = imageLoader,
+                        imageLoader = imageLoader, // 👈 теперь глобальный
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop,
                         onState = { state ->
@@ -354,6 +356,8 @@ fun ProfileHeader(
                                 .data(if (profile.profile_photo?.isNotBlank() == true) profile.profile_photo else null)
                                 .fallback(android.R.drawable.ic_menu_gallery)
                                 .error(android.R.drawable.ic_menu_gallery)
+                                .diskCacheKey(profile.profile_photo) // 👈 для диска
+                                .memoryCacheKey(profile.profile_photo) // 👈 для памяти
                                 .build(),
                             contentDescription = "Фото профиля",
                             imageLoader = imageLoader,

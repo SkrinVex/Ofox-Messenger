@@ -23,6 +23,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -30,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModelProvider
 import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.SkrinVex.OfoxMessenger.network.Friend
 import com.SkrinVex.OfoxMessenger.ui.common.enableInternetCheck
 import com.SkrinVex.OfoxMessenger.ui.theme.OfoxMessengerTheme
@@ -252,6 +254,9 @@ fun SearchBar(query: String, onQueryChange: (String) -> Unit) {
 
 @Composable
 fun FriendCard(user: Friend, onClick: () -> Unit) {
+    val context = LocalContext.current
+    val imageLoader = (context.applicationContext as App).imageLoader
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(16.dp),
@@ -264,15 +269,20 @@ fun FriendCard(user: Friend, onClick: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             AsyncImage(
-                model = user.profile_photo?.takeIf { it.isNotBlank() },
+                model = ImageRequest.Builder(context)
+                    .data(user.profile_photo?.takeIf { it.isNotBlank() })
+                    .placeholder(R.drawable.logo)
+                    .error(R.drawable.logo)
+                    .diskCacheKey(user.profile_photo)   // 👈 для дискового кэша
+                    .memoryCacheKey(user.profile_photo) // 👈 для RAM-кэша
+                    .build(),
                 contentDescription = "Фото пользователя",
+                imageLoader = imageLoader, // 👈 подключаем глобальный
                 modifier = Modifier
                     .size(48.dp)
                     .clip(CircleShape)
                     .background(Color(0xFF333333)),
-                contentScale = ContentScale.Crop,
-                placeholder = painterResource(id = R.drawable.logo),
-                error = painterResource(id = R.drawable.logo)
+                contentScale = ContentScale.Crop
             )
             Column {
                 Text(

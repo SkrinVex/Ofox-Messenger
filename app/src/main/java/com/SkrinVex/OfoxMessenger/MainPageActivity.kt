@@ -43,6 +43,7 @@ import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 import coil.compose.rememberAsyncImagePainter
+import coil.request.ImageRequest
 import com.SkrinVex.OfoxMessenger.network.MainPageResponse
 import com.SkrinVex.OfoxMessenger.network.NotificationItem
 import com.SkrinVex.OfoxMessenger.network.ProfileCheckResponse
@@ -249,6 +250,7 @@ fun MainScreen(
 @Composable
 fun UserHeaderCard(profile: ProfileCheckResponse, onClick: () -> Unit) {
     val context = LocalContext.current
+    val imageLoader = (context.applicationContext as App).imageLoader
 
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -270,12 +272,17 @@ fun UserHeaderCard(profile: ProfileCheckResponse, onClick: () -> Unit) {
                 contentAlignment = Alignment.Center
             ) {
                 AsyncImage(
-                    model = profile.profile_photo?.takeIf { it.isNotBlank() },
+                    model = ImageRequest.Builder(context)
+                        .data(profile.profile_photo?.takeIf { it.isNotBlank() })
+                        .placeholder(R.drawable.logo)
+                        .error(R.drawable.logo)
+                        .diskCacheKey(profile.profile_photo)   // 👈 ключ для дискового кэша
+                        .memoryCacheKey(profile.profile_photo) // 👈 ключ для RAM-кэша
+                        .build(),
                     contentDescription = null,
+                    imageLoader = imageLoader, // 👈 используем глобальный
                     modifier = Modifier.matchParentSize(),
-                    contentScale = ContentScale.Crop,
-                    placeholder = painterResource(id = R.drawable.logo),
-                    error = painterResource(id = R.drawable.logo)
+                    contentScale = ContentScale.Crop
                 )
             }
 

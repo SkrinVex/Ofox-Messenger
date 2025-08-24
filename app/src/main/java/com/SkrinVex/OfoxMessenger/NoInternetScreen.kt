@@ -16,6 +16,7 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -134,16 +135,16 @@ private class WeakInternetOverlay(activity: ComponentActivity) {
 
     private val networkCallback = object : ConnectivityManager.NetworkCallback() {
         override fun onCapabilitiesChanged(network: Network, nc: NetworkCapabilities) {
-            // Проверка: есть ли валидный интернет
             val validated = nc.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
 
-            // Скорость в Kbps (среднее значение вниз/вверх)
-            val bandwidth = (nc.linkDownstreamBandwidthKbps + nc.linkUpstreamBandwidthKbps) / 2
+            val down = nc.linkDownstreamBandwidthKbps
+            val up = nc.linkUpstreamBandwidthKbps
+            val avg = (down + up) / 2
 
-            // Считаем интернет слабым если:
-            // 1) интернет валидный
-            // 2) скорость меньше 1000 Kbps (1 Мбит/с)
-            val weak = validated && bandwidth in 1..1000
+            // Условия слабого интернета:
+            // 1. сеть невалидна (но есть подключение)
+            // 2. либо скорость меньше 512 Kbps (0.5 Мбит/с)
+            val weak = (!validated && (down > 0 || up > 0)) || (avg in 1..512)
 
             if (weak != isWeak) {
                 isWeak = weak
@@ -195,45 +196,58 @@ private class WeakInternetOverlay(activity: ComponentActivity) {
 
 @Composable
 private fun WeakInternetBanner(isWeakProvider: () -> Boolean) {
-    var visible by remember { mutableStateOf(isWeakProvider()) }
-    var offset by remember { mutableStateOf(Offset(0f, 0f)) }
     var dismissed by remember { mutableStateOf(false) }
-
-    LaunchedEffect(isWeakProvider()) {
-        visible = isWeakProvider() && !dismissed
-    }
+    val visible = isWeakProvider() && !dismissed
 
     AnimatedVisibility(
         visible = visible,
-        enter = fadeIn(tween(400)),
-        exit = fadeOut(tween(400))
+        enter = fadeIn(tween(300)),
+        exit = fadeOut(tween(300))
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(start = 16.dp, end = 16.dp, bottom = 80.dp)
-                .offset { androidx.compose.ui.unit.IntOffset(offset.x.toInt(), offset.y.toInt()) }
-                .pointerInput(Unit) {
-                    detectDragGestures { _, dragAmount ->
-                        offset += dragAmount
-                    }
-                }
-                .background(Color(0xFFFFA726), RoundedCornerShape(12.dp))
-                .padding(horizontal = 16.dp, vertical = 12.dp)
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+            Surface(
+                color = Color(0xFFFF6B35),
+                shape = RoundedCornerShape(12.dp),
+                shadowElevation = 6.dp,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .pointerInput(Unit) {
+                        detectVerticalDragGestures { _, dragAmount ->
+                            if (dragAmount > 20) { // 👈 если тянем вниз
+                                dismissed = true
+                            }
+                        }
+                    }
             ) {
-                Text(
-                    text = "Слабое подключение",
-                    color = Color.Black,
-                    fontSize = 14.sp,
-                    fontWeight = FontWeight.Bold
-                )
-                TextButton(onClick = { dismissed = true }) {
-                    Text("Закрыть", color = Color.Black, fontSize = 12.sp)
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Rounded.CloudOff,
+                            contentDescription = "Слабый интернет",
+                            tint = Color.White,
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Слабое подключение",
+                            color = Color.White,
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    TextButton(onClick = { dismissed = true }) {
+                        Text("Закрыть", color = Color.White, fontSize = 12.sp)
+                    }
                 }
             }
         }
@@ -242,7 +256,12 @@ private fun WeakInternetBanner(isWeakProvider: () -> Boolean) {
 
 // Подключение обоих оверлеев
 fun ComponentActivity.enableInternetCheck() {
-    val noInternetOverlay = NoInternetOverlay(this) { finish() }
+    val noInternetOverlay = NoInternetOverlay(this) {
+        // Завершение всего приложения
+        finishAffinity()
+        android.os.Process.killProcess(android.os.Process.myPid())
+        kotlin.system.exitProcess(0)
+    }
     val weakInternetOverlay = WeakInternetOverlay(this)
 
     lifecycle.addObserver(object : androidx.lifecycle.DefaultLifecycleObserver {

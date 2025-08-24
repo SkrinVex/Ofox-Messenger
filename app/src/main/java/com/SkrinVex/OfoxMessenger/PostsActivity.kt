@@ -60,6 +60,7 @@ import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.core.graphics.drawable.toBitmap
+import coil.request.ImageRequest
 import com.SkrinVex.OfoxMessenger.ui.common.enableInternetCheck
 import com.SkrinVex.OfoxMessenger.utils.SmartLinkText
 import kotlinx.coroutines.delay
@@ -777,6 +778,7 @@ fun ReactionButtons(
 @Composable
 fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
     val context = LocalContext.current
+    val imageLoader = (context.applicationContext as App).imageLoader
     var isImageLoading by remember { mutableStateOf(true) }
     var showBottomSheet by remember { mutableStateOf(false) }
     var showEditDialog by remember { mutableStateOf(false) }
@@ -890,8 +892,15 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
                 }
             ) {
                 AsyncImage(
-                    model = post.profile_photo?.takeIf { it.isNotBlank() },
+                    model = ImageRequest.Builder(context)
+                        .data(post.profile_photo?.takeIf { it.isNotBlank() })
+                        .diskCacheKey(post.profile_photo)   // 👈 сохраняем в дисковом кэше
+                        .memoryCacheKey(post.profile_photo) // 👈 сохраняем в RAM
+                        .placeholder(R.drawable.logo)       // 👈 можешь добавить заглушку
+                        .error(R.drawable.logo)             // 👈 и ошибку
+                        .build(),
                     contentDescription = "Аватар",
+                    imageLoader = imageLoader, // 👈 используем общий кэшер
                     modifier = Modifier
                         .size(40.dp)
                         .clip(CircleShape)
