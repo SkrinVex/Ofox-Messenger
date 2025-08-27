@@ -54,6 +54,12 @@ import com.SkrinVex.OfoxMessenger.ui.dialogs.DialogController
 import com.SkrinVex.OfoxMessenger.ui.dialogs.GlobalDialogHost
 import com.SkrinVex.OfoxMessenger.ui.viewer.PhotoViewerActivity
 import com.SkrinVex.OfoxMessenger.utils.SmartLinkText
+import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.messaging.FirebaseMessaging
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 
 class MainPageActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -62,6 +68,19 @@ class MainPageActivity : ComponentActivity() {
         val uid = intent.getStringExtra("uid") ?: ""
         val viewModel: MainPageViewModel by viewModels {
             MainPageViewModelFactory(uid)
+        }
+
+        // 🔥 Обновляем FCM-токен сразу при заходе в главную страницу
+        FirebaseMessaging.getInstance().token.addOnSuccessListener { token ->
+            if (uid.isNotEmpty()) {
+                saveToken(uid, token)
+            }
+        }
+
+        if (intent.getBooleanExtra("open_game", false)) {
+            startActivity(Intent(this, com.SkrinVex.OfoxMessenger.games.Flappy::class.java))
+            finish()
+            return
         }
 
         setContent {
@@ -77,6 +96,19 @@ class MainPageActivity : ComponentActivity() {
                         startActivityForResult(intent, ProfileEditActivity.RESULT_PROFILE_UPDATED)
                     }
                 )
+            }
+        }
+    }
+
+    private fun saveToken(uid: String, token: String) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                FirebaseDatabase.getInstance()
+                    .getReference("users/$uid/fcm_token")
+                    .setValue(token)
+                    .await()
+            } catch (e: Exception) {
+                e.printStackTrace()
             }
         }
     }

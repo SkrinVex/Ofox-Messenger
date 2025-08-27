@@ -8,7 +8,6 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.*
 import com.SkrinVex.OfoxMessenger.network.ApiService
 import com.SkrinVex.OfoxMessenger.network.Friend
-import com.SkrinVex.OfoxMessenger.network.FriendsResponse
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow

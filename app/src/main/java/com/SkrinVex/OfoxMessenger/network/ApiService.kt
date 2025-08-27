@@ -8,6 +8,8 @@ import retrofit2.http.GET
 import retrofit2.http.Multipart
 import retrofit2.http.POST
 import retrofit2.http.Part
+import retrofit2.http.FormUrlEncoded
+import retrofit2.http.Field
 import retrofit2.http.Query
 import java.io.Serializable
 
@@ -30,6 +32,22 @@ interface ApiService {
         @Query("api_key") apiKey: String,
         @Query("search_query") searchQuery: String?
     ): Response<FriendsResponse>
+
+    // Обновленный универсальный метод для отправки уведомлений
+    @FormUrlEncoded
+    @POST("send_notification.php")
+    suspend fun sendNotification(
+        @Field("type") type: String,
+        @Field("from_uid") fromUid: String,
+        @Field("to_uid") toUid: String,
+        @Field("message") message: String,
+        @Field("chat_id") chatId: String? = null,
+        @Field("message_id") messageId: String? = null,
+        @Field("post_id") postId: String? = null,
+        @Field("comment_id") commentId: String? = null,
+        @Field("button_text") buttonText: String? = null,
+        @Field("button_url") buttonUrl: String? = null
+    ): Response<GenericResponse>
 
     companion object {
         private const val BASE_URL = "https://api.skrinvex.su/"

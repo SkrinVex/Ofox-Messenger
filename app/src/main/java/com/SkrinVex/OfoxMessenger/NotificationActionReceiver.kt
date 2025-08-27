@@ -1,0 +1,129 @@
+package com.SkrinVex.OfoxMessenger
+
+import android.app.NotificationManager
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.Intent
+import android.util.Log
+import androidx.core.app.RemoteInput
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.database.FirebaseDatabase
+import com.SkrinVex.OfoxMessenger.network.ApiService
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
+import java.util.UUID
+
+class NotificationActionReceiver : BroadcastReceiver() {
+
+    override fun onReceive(context: Context, intent: Intent) {
+        val action = intent.action
+        val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        val notificationId = intent.getStringExtra("notification_id")
+        val notificationIdInt = intent.getIntExtra("notification_id_int", 0)
+
+        if (action == "MARK_AS_READ") {
+            val chatId = intent.getStringExtra("chat_id")
+            val messageId = intent.getStringExtra("message_id")
+
+            if (chatId != null && messageId != null) {
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        // Mark message as read
+                        FirebaseDatabase.getInstance()
+                            .getReference("chats/$chatId/messages/$messageId/status")
+                            .setValue("read")
+                            .await()
+
+                        // Remove notification from database
+                        if (notificationId != null) {
+                            FirebaseDatabase.getInstance()
+                                .getReference("users/$currentUserId/notifications/$notificationId")
+                                .removeValue()
+                                .await()
+                        }
+
+                        // Cancel the notification from the system tray
+                        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                        notificationManager.cancel(notificationIdInt)
+                    } catch (e: Exception) {
+                        Log.e("NotificationReceiver", "Error marking as read: ${e.message}", e)
+                    }
+                }
+            }
+        } else if (action == "REPLY") {
+            val friendUid = intent.getStringExtra("friend_uid")
+            val replyText = RemoteInput.getResultsFromIntent(intent)?.getCharSequence("key_text_reply")?.toString()?.trim()
+
+            if (replyText != null && friendUid != null) {
+                val chatId = if (currentUserId < friendUid) "${currentUserId}_${friendUid}" else "${friendUid}_${currentUserId}"
+                val messageId = UUID.randomUUID().toString()
+                val timestamp = System.currentTimeMillis()
+                val message = mapOf(
+                    "id" to messageId,
+                    "senderId" to currentUserId,
+                    "content" to replyText,
+                    "timestamp" to timestamp,
+                    "status" to "sent"
+                )
+
+                CoroutineScope(Dispatchers.IO).launch {
+                    try {
+                        // Save reply message
+                        FirebaseDatabase.getInstance()
+                            .getReference("chats/$chatId/messages/$messageId")
+                            .setValue(message)
+                            .await()
+
+                        // Update status to delivered
+                        FirebaseDatabase.getInstance()
+                            .getReference("chats/$chatId/messages/$messageId/status")
+                            .setValue("delivered")
+                            .await()
+
+                        // Send push notification
+                        val api = ApiService.create()
+                        api.sendNotification(
+                            type = "chat_message",
+                            fromUid = currentUserId,
+                            toUid = friendUid,
+                            message = replyText,
+                            chatId = chatId,
+                            messageId = messageId
+                        )
+
+                        // Add notification to friend's database
+                        val newNotificationId = UUID.randomUUID().toString()
+                        FirebaseDatabase.getInstance()
+                            .getReference("users/$friendUid/notifications/$newNotificationId")
+                            .setValue(
+                                mapOf(
+                                    "type" to "chat_message",
+                                    "from_uid" to currentUserId,
+                                    "chat_id" to chatId,
+                                    "message_id" to messageId,
+                                    "timestamp" to timestamp,
+                                    "message" to replyText.take(30) + if (replyText.length > 30) "..." else ""
+                                )
+                            ).await()
+
+                        // Remove original notification from database
+                        if (notificationId != null) {
+                            FirebaseDatabase.getInstance()
+                                .getReference("users/$currentUserId/notifications/$notificationId")
+                                .removeValue()
+                                .await()
+                        }
+
+                        // Cancel the original notification from the system tray
+                        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                        notificationManager.cancel(notificationIdInt)
+                    } catch (e: Exception) {
+                        Log.e("NotificationReceiver", "Error sending reply: ${e.message}", e)
+                    }
+                }
+            }
+        }
+    }
+}

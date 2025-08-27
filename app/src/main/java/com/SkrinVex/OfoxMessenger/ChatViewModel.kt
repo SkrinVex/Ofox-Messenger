@@ -4,8 +4,8 @@ import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
-import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.*
+import com.SkrinVex.OfoxMessenger.network.ApiService
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -26,7 +26,9 @@ data class ChatState(
     val messages: List<Message> = emptyList(),
     val messageText: String = "",
     val isSending: Boolean = false,
-    val error: String? = null
+    val isLoading: Boolean = true,
+    val error: String? = null,
+    val canLoadMore: Boolean = true
 )
 
 class ChatViewModel(
@@ -35,10 +37,14 @@ class ChatViewModel(
 ) : ViewModel() {
     private val _state = MutableStateFlow(ChatState())
     val state: StateFlow<ChatState> = _state.asStateFlow()
-    private var messagesListener: ValueEventListener? = null
+
+    private var lastLoadedMessageKey: String? = null
+    private val pageSize = 20
+    private val chatRef = FirebaseDatabase.getInstance().getReference("chats/${getChatId()}/messages")
 
     init {
-        setupMessagesListener()
+        loadInitialMessages()
+        listenForNewMessages()
     }
 
     private fun getChatId(): String {
@@ -59,67 +65,95 @@ class ChatViewModel(
             _state.value = _state.value.copy(isSending = true)
             try {
                 val messageId = UUID.randomUUID().toString()
+                val chatId = getChatId()
+                val timestamp = System.currentTimeMillis()
                 val message = mapOf(
                     "id" to messageId,
                     "senderId" to currentUserId,
                     "content" to _state.value.messageText,
-                    "timestamp" to System.currentTimeMillis(),
+                    "timestamp" to timestamp,
                     "status" to "sent"
                 )
 
-                val chatId = getChatId()
+                if (currentUserId.isEmpty()) {
+                    throw IllegalStateException("Пользователь не авторизован")
+                }
+
                 FirebaseDatabase.getInstance()
                     .getReference("chats/$chatId/messages/$messageId")
                     .setValue(message)
                     .await()
 
-                // Обновляем статус на "delivered"
                 FirebaseDatabase.getInstance()
                     .getReference("chats/$chatId/messages/$messageId/status")
                     .setValue("delivered")
                     .await()
 
-                // Отправляем уведомление о том что вас упомянули
+                try {
+                    val api = ApiService.create()
+                    val response = api.sendNotification(
+                        type = "chat_message",
+                        fromUid = currentUserId,
+                        toUid = friendUid,
+                        message = _state.value.messageText,
+                        chatId = chatId,
+                        messageId = messageId
+                    )
+                    if (!response.isSuccessful) {
+                        Log.e("ChatViewModel", "Ошибка пуша: ${response.errorBody()?.string()}")
+                    }
+                } catch (e: Exception) {
+                    Log.e("ChatViewModel", "Ошибка вызова API пуша: ${e.message}", e)
+                }
+
                 val mentions = extractMentions(_state.value.messageText)
                 for (mention in mentions) {
                     val uid = getUidByUsername(mention)
-                    if (uid != null && uid != currentUserId) {
-                        val notificationId = UUID.randomUUID().toString()
+                    if (uid != null && uid != currentUserId && uid != friendUid) {
+                        val mentionNotificationId = UUID.randomUUID().toString()
+                        val mentionMessage = "$mention, вас упомянули в сообщении"
                         FirebaseDatabase.getInstance()
-                            .getReference("users/$uid/notifications/$notificationId")
+                            .getReference("users/$uid/notifications/$mentionNotificationId")
                             .setValue(
                                 mapOf(
                                     "type" to "mention",
                                     "from_uid" to currentUserId,
                                     "message_id" to messageId,
-                                    "timestamp" to System.currentTimeMillis(),
-                                    "message" to "$mention, вас упомянули в сообщении"
+                                    "chat_id" to chatId,
+                                    "timestamp" to timestamp,
+                                    "message" to mentionMessage
                                 )
                             ).await()
+
+                        try {
+                            val api = ApiService.create()
+                            val response = api.sendNotification(
+                                type = "mention",
+                                fromUid = currentUserId,
+                                toUid = uid,
+                                message = mentionMessage,
+                                chatId = chatId,
+                                messageId = messageId
+                            )
+                            if (!response.isSuccessful) {
+                                Log.e("ChatViewModel", "Ошибка пуша упоминания: ${response.errorBody()?.string()}")
+                            }
+                        } catch (e: Exception) {
+                            Log.e("ChatViewModel", "Ошибка API пуша упоминания: ${e.message}", e)
+                        }
                     }
                 }
 
-                // Отправляем уведомление о новом сообщении
-                val notificationId = UUID.randomUUID().toString()
-                FirebaseDatabase.getInstance()
-                    .getReference("users/$friendUid/notifications/$notificationId")
-                    .setValue(mapOf(
-                        "type" to "new_message",
-                        "from_uid" to currentUserId,
-                        "message_id" to messageId,
-                        "timestamp" to System.currentTimeMillis(),
-                        "message" to "Новое сообщение: ${_state.value.messageText.take(30)}..."
-                    )).await()
-
-                _state.value = _state.value.copy(
-                    messageText = "",
-                    isSending = false
-                )
-            } catch (e: Exception) {
-                Log.e("ChatViewModel", "Error sending message: ${e.message}", e)
                 _state.value = _state.value.copy(
                     isSending = false,
-                    error = "Ошибка отправки: ${e.message}"
+                    messageText = "",
+                    error = null
+                )
+            } catch (e: Exception) {
+                Log.e("ChatViewModel", "Ошибка отправки: ${e.message}", e)
+                _state.value = _state.value.copy(
+                    isSending = false,
+                    error = "Ошибка: ${e.message}"
                 )
             }
         }
@@ -153,81 +187,142 @@ class ChatViewModel(
         viewModelScope.launch {
             try {
                 val chatId = getChatId()
-                // Удаляем сообщение
                 FirebaseDatabase.getInstance()
                     .getReference("chats/$chatId/messages/$messageId")
                     .removeValue()
                     .await()
 
-                // Находим и удаляем связанное уведомление
                 val notificationsSnapshot = FirebaseDatabase.getInstance()
                     .getReference("users/$friendUid/notifications")
                     .get()
                     .await()
                 notificationsSnapshot.children.forEach { snapshot ->
                     val notificationData = snapshot.value as? Map<String, Any>
-                    if (notificationData?.get("type") == "new_message" && notificationData["message_id"] == messageId) {
+                    if (notificationData?.get("type") == "chat_message" && notificationData["message_id"] == messageId) {
                         snapshot.ref.removeValue().await()
                     }
                 }
             } catch (e: Exception) {
-                Log.e("ChatViewModel", "Error deleting message: ${e.message}", e)
+                Log.e("ChatViewModel", "Error deleting: ${e.message}", e)
                 _state.value = _state.value.copy(error = "Ошибка удаления: ${e.message}")
             }
         }
     }
 
-    private fun setupMessagesListener() {
-        messagesListener?.let {
-            FirebaseDatabase.getInstance()
-                .getReference("chats/${getChatId()}/messages")
-                .removeEventListener(it)
-        }
-
-        messagesListener = object : ValueEventListener {
-            override fun onDataChange(snapshot: DataSnapshot) {
-                val messages = mutableListOf<Message>()
-                snapshot.children.forEach { child ->
-                    val messageData = child.value as? Map<String, Any>
-                    if (messageData != null) {
-                        val message = Message(
-                            id = messageData["id"] as? String ?: "",
-                            senderId = messageData["senderId"] as? String ?: "",
-                            content = messageData["content"] as? String ?: "",
-                            timestamp = (messageData["timestamp"] as? Long) ?: 0L,
-                            status = messageData["status"] as? String ?: "sent"
-                        )
-                        messages.add(message)
-
-                        // Обновляем статус на "read" для чужих сообщений
-                        if (message.senderId != currentUserId && message.status != "read") {
-                            FirebaseDatabase.getInstance()
-                                .getReference("chats/${getChatId()}/messages/${message.id}/status")
-                                .setValue("read")
-                        }
+    fun removeNotificationForMessage(messageId: String) {
+        viewModelScope.launch {
+            try {
+                val notificationsSnapshot = FirebaseDatabase.getInstance()
+                    .getReference("users/$currentUserId/notifications")
+                    .get()
+                    .await()
+                notificationsSnapshot.children.forEach { snapshot ->
+                    val notificationData = snapshot.value as? Map<String, Any>
+                    if (notificationData?.get("type") == "chat_message" && notificationData["message_id"] == messageId) {
+                        snapshot.ref.removeValue().await()
                     }
                 }
-                _state.value = _state.value.copy(messages = messages.sortedBy { it.timestamp })
-            }
-
-            override fun onCancelled(error: DatabaseError) {
-                Log.e("ChatViewModel", "Messages listener error: ${error.message}")
-                _state.value = _state.value.copy(error = "Ошибка загрузки: ${error.message}")
+            } catch (e: Exception) {
+                Log.e("ChatViewModel", "Error removing notification: ${e.message}", e)
+                _state.value = _state.value.copy(error = "Ошибка удаления уведомления: ${e.message}")
             }
         }
-
-        FirebaseDatabase.getInstance()
-            .getReference("chats/${getChatId()}/messages")
-            .addValueEventListener(messagesListener!!)
     }
 
-    override fun onCleared() {
-        messagesListener?.let {
-            FirebaseDatabase.getInstance()
-                .getReference("chats/${getChatId()}/messages")
-                .removeEventListener(it)
+    // --- Загрузка сообщений с пагинацией ---
+
+    private fun loadInitialMessages() {
+        viewModelScope.launch {
+            try {
+                _state.value = _state.value.copy(isLoading = true)
+                val snapshot = chatRef
+                    .orderByKey()
+                    .limitToLast(pageSize)
+                    .get()
+                    .await()
+
+                val messages = snapshot.children.mapNotNull { it.toMessage() }
+                lastLoadedMessageKey = snapshot.children.firstOrNull()?.key
+
+                _state.value = _state.value.copy(
+                    messages = messages.sortedBy { it.timestamp },
+                    isLoading = false,
+                    canLoadMore = snapshot.childrenCount.toInt() >= pageSize
+                )
+            } catch (e: Exception) {
+                Log.e("ChatViewModel", "Ошибка загрузки: ${e.message}", e)
+                _state.value = _state.value.copy(isLoading = false, error = "Ошибка загрузки: ${e.message}")
+            }
         }
-        super.onCleared()
+    }
+
+    fun loadMoreMessages() {
+        viewModelScope.launch {
+            if (lastLoadedMessageKey == null || !_state.value.canLoadMore) return@launch
+            try {
+                val snapshot = chatRef
+                    .orderByKey()
+                    .endBefore(lastLoadedMessageKey)
+                    .limitToLast(pageSize)
+                    .get()
+                    .await()
+
+                val newMessages = snapshot.children.mapNotNull { it.toMessage() }
+                if (newMessages.isNotEmpty()) {
+                    lastLoadedMessageKey = snapshot.children.firstOrNull()?.key
+                    _state.value = _state.value.copy(
+                        messages = (newMessages + _state.value.messages).sortedBy { it.timestamp },
+                        canLoadMore = snapshot.childrenCount.toInt() >= pageSize
+                    )
+                } else {
+                    _state.value = _state.value.copy(canLoadMore = false)
+                }
+            } catch (e: Exception) {
+                Log.e("ChatViewModel", "Ошибка подгрузки: ${e.message}", e)
+            }
+        }
+    }
+
+    private fun listenForNewMessages() {
+        chatRef.limitToLast(1).addChildEventListener(object : ChildEventListener {
+            override fun onChildAdded(snapshot: DataSnapshot, previousChildName: String?) {
+                val message = snapshot.toMessage() ?: return
+                val exists = _state.value.messages.any { it.id == message.id }
+                if (!exists) {
+                    _state.value = _state.value.copy(
+                        messages = (_state.value.messages + message).sortedBy { it.timestamp }
+                    )
+                }
+            }
+
+            override fun onChildChanged(snapshot: DataSnapshot, previousChildName: String?) {
+                val message = snapshot.toMessage() ?: return
+                _state.value = _state.value.copy(
+                    messages = _state.value.messages.map { if (it.id == message.id) message else it }
+                )
+            }
+
+            override fun onChildRemoved(snapshot: DataSnapshot) {
+                val removedId = snapshot.key
+                _state.value = _state.value.copy(
+                    messages = _state.value.messages.filterNot { it.id == removedId }
+                )
+            }
+
+            override fun onChildMoved(snapshot: DataSnapshot, previousChildName: String?) {}
+            override fun onCancelled(error: DatabaseError) {}
+        })
+    }
+
+    private fun DataSnapshot.toMessage(): Message? {
+        val data = value as? Map<String, Any> ?: return null
+        return Message(
+            id = data["id"] as? String ?: key ?: "",
+            senderId = data["senderId"] as? String ?: "",
+            content = data["content"] as? String ?: "",
+            timestamp = (data["timestamp"] as? Long) ?: 0L,
+            status = data["status"] as? String ?: "sent"
+        )
     }
 }
 

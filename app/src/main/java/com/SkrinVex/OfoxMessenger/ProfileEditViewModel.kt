@@ -8,7 +8,6 @@ import androidx.lifecycle.viewModelScope
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.FirebaseDatabase
 import com.SkrinVex.OfoxMessenger.network.ApiService
-import com.SkrinVex.OfoxMessenger.network.ImageUploadResponse
 import com.SkrinVex.OfoxMessenger.utils.ImageUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow

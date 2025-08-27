@@ -80,4 +80,5 @@ dependencies {
     implementation("com.google.accompanist:accompanist-systemuicontroller:0.36.0")
     implementation("com.google.firebase:firebase-messaging:25.0.0")
     implementation("com.google.firebase:firebase-storage-ktx")
+    implementation("androidx.security:security-crypto-ktx:1.1.0")
 }

@@ -29,6 +29,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Send
+import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -41,6 +42,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
@@ -64,7 +66,7 @@ class ChatActivity : ComponentActivity() {
         // Настройка для правильного поведения с клавиатурой
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = Color(0xFF0A0A0A).toArgb()
-        window.navigationBarColor = Color(0xFF0A0A0A).toArgb()
+        window.navigationBarColor = Color.Transparent.toArgb()
 
         val friendUid = intent.getStringExtra("friend_uid") ?: return finish()
         val friendName = intent.getStringExtra("friend_name") ?: "Пользователь"
@@ -100,8 +102,13 @@ fun ChatScreen(
 
     SideEffect {
         systemUiController.setSystemBarsColor(
-            color = Color(0xFF0A0A0A),
+            color = Color.Transparent,
             darkIcons = false
+        )
+        systemUiController.setNavigationBarColor(
+            color = Color.Transparent,
+            darkIcons = false,
+            navigationBarContrastEnforced = false
         )
     }
 
@@ -121,7 +128,16 @@ fun ChatScreen(
         }
     }
 
-    Scaffold(
+    // Группировка сообщений по датам
+    val dateFormatter = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()) }
+    val displayDateFormatter = remember { SimpleDateFormat("dd MMMM yyyy", Locale.getDefault()) }
+    val groupedMessages = remember(state.messages) {
+        state.messages.groupBy { message ->
+            dateFormatter.format(Date(message.timestamp))
+        }
+    }
+
+    Column(
         modifier = Modifier
             .fillMaxSize()
             .background(
@@ -132,50 +148,77 @@ fun ChatScreen(
                         Color(0xFF0A0A0A)
                     )
                 )
-            ),
-        topBar = {
-            ChatTopBar(
-                friendName = friendName,
-                friendPhoto = friendPhoto,
-                onBack = onBack
             )
-        },
-        bottomBar = {
-            MessageInputField(
-                messageText = state.messageText,
-                onMessageChange = viewModel::updateMessageText,
-                onSendClick = { viewModel.sendMessage() },
-                isSending = state.isSending,
-                modifier = Modifier.fillMaxWidth()
-            )
-        },
-        containerColor = Color.Transparent
-    ) { paddingValues ->
+            .statusBarsPadding()
+    ) {
+        // Фиксированный ToolBar
+        ChatTopBar(
+            friendName = friendName,
+            friendPhoto = friendPhoto,
+            onBack = onBack
+        )
+
+        // Контент чата
         Box(
             modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
+                .weight(1f)
+                .fillMaxWidth()
         ) {
-            LazyColumn(
-                state = lazyListState,
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(
-                    start = 12.dp,
-                    end = 12.dp,
-                    top = 8.dp,
-                    bottom = 16.dp
-                ),
-                verticalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                items(state.messages) { message ->
-                    MessageCard(
-                        message = message,
-                        isOwnMessage = message.senderId == FirebaseAuth.getInstance().currentUser?.uid,
-                        onLongClick = { selectedMessage = message }
-                    )
+            when {
+                state.isLoading -> {
+                    // Показываем крутилку
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        CircularProgressIndicator(color = Color(0xFFFF6B35))
+                    }
+                }
+                state.messages.isEmpty() -> {
+                    EmptyChatPlaceholder()
+                }
+                else -> {
+                    LazyColumn(
+                        state = lazyListState,
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(
+                            start = 12.dp,
+                            end = 12.dp,
+                            top = 8.dp,
+                            bottom = 16.dp
+                        ),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        groupedMessages.entries.sortedBy { it.key }.forEach { (dateKey, messages) ->
+                            stickyHeader {
+                                DateHeader(
+                                    date = displayDateFormatter.format(dateFormatter.parse(dateKey) ?: Date())
+                                )
+                            }
+                            items(messages) { message ->
+                                MessageCard(
+                                    message = message,
+                                    isOwnMessage = message.senderId == FirebaseAuth.getInstance().currentUser?.uid,
+                                    onLongClick = { selectedMessage = message }
+                                )
+                            }
+                        }
+                    }
                 }
             }
         }
+
+        // Поле ввода с отступами
+        MessageInputField(
+            messageText = state.messageText,
+            onMessageChange = viewModel::updateMessageText,
+            onSendClick = { viewModel.sendMessage() },
+            isSending = state.isSending,
+            modifier = Modifier
+                .fillMaxWidth()
+                .windowInsetsPadding(WindowInsets.ime)
+                .navigationBarsPadding() // Отступ от навигационной панели
+        )
 
         // Bottom sheet для действий с сообщениями
         if (selectedMessage != null) {
@@ -237,17 +280,242 @@ fun ChatScreen(
 }
 
 @Composable
+fun DateHeader(date: String) {
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Color.Transparent)
+            .padding(vertical = 8.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Surface(
+            modifier = Modifier
+                .wrapContentSize()
+                .shadow(4.dp, RoundedCornerShape(16.dp)),
+            shape = RoundedCornerShape(16.dp),
+            color = Color(0xFF2A2A2A).copy(alpha = 0.8f)
+        ) {
+            Text(
+                text = date,
+                color = Color.White.copy(alpha = 0.7f),
+                fontSize = 13.sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
+            )
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+fun MessageCard(
+    message: Message,
+    isOwnMessage: Boolean,
+    onLongClick: () -> Unit
+) {
+    val alignment = if (isOwnMessage) Alignment.CenterEnd else Alignment.CenterStart
+    val backgroundColor = if (isOwnMessage) Color(0xFFFF6B35) else Color(0xFF2A2A2A)
+    val textColor = if (isOwnMessage) Color.Black else Color.White
+    val formatter = SimpleDateFormat("HH:mm", Locale.getDefault())
+
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = 4.dp),
+        contentAlignment = alignment
+    ) {
+        Card(
+            modifier = Modifier
+                .widthIn(max = 280.dp)
+                .combinedClickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = { },
+                    onLongClick = onLongClick
+                )
+                .shadow(
+                    elevation = 4.dp,
+                    shape = RoundedCornerShape(
+                        topStart = 16.dp,
+                        topEnd = 16.dp,
+                        bottomStart = if (isOwnMessage) 16.dp else 4.dp,
+                        bottomEnd = if (isOwnMessage) 4.dp else 16.dp
+                    )
+                ),
+            shape = RoundedCornerShape(
+                topStart = 16.dp,
+                topEnd = 16.dp,
+                bottomStart = if (isOwnMessage) 16.dp else 4.dp,
+                bottomEnd = if (isOwnMessage) 4.dp else 16.dp
+            ),
+            colors = CardDefaults.cardColors(containerColor = Color.Transparent)
+        ) {
+            Box(
+                modifier = Modifier
+                    .background(backgroundColor)
+            ) {
+                Column(
+                    modifier = Modifier.padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    SmartLinkText(
+                        text = message.content,
+                        color = textColor,
+                        fontSize = 15.sp,
+                        lineHeight = 20.sp
+                    )
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (isOwnMessage) {
+                            Text(
+                                text = when (message.status) {
+                                    "sent" -> "•"
+                                    "delivered" -> "••"
+                                    "read" -> "✓✓"
+                                    else -> ""
+                                },
+                                color = textColor.copy(alpha = 0.7f),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+
+                        Text(
+                            text = formatter.format(Date(message.timestamp)),
+                            color = textColor.copy(alpha = 0.7f),
+                            fontSize = 11.sp
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun EmptyChatPlaceholder() {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(32.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Card(
+            modifier = Modifier
+                .fillMaxWidth()
+                .shadow(
+                    elevation = 8.dp,
+                    shape = RoundedCornerShape(24.dp)
+                ),
+            shape = RoundedCornerShape(24.dp),
+            colors = CardDefaults.cardColors(containerColor = Color.Transparent)
+        ) {
+            Box(
+                modifier = Modifier
+                    .background(
+                        brush = Brush.radialGradient(
+                            colors = listOf(
+                                Color(0xFFFF6B35).copy(alpha = 0.2f),
+                                Color(0xFF1A1A1A).copy(alpha = 0.8f),
+                                Color(0xFF0A0A0A).copy(alpha = 0.9f)
+                            ),
+                            radius = 400f
+                        )
+                    )
+                    .padding(32.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    // Маскот с фото
+                    Box(
+                        modifier = Modifier
+                            .size(120.dp)
+                            .background(
+                                Color.Transparent
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        AsyncImage(
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(R.drawable.lisa_hello)
+                                .fallback(android.R.drawable.ic_menu_gallery)
+                                .error(android.R.drawable.ic_menu_gallery)
+                                .build(),
+                            contentDescription = "Маскот ЧАО-такт",
+                            modifier = Modifier
+                                .size(100.dp)
+                                .clip(CircleShape)
+                                .background(
+                                    brush = Brush.radialGradient(
+                                        colors = listOf(
+                                            Color(0xFFFF6B35).copy(alpha = 0.2f),
+                                            Color.Transparent
+                                        ),
+                                        radius = 100f
+                                    )
+                                ),
+                            contentScale = androidx.compose.ui.layout.ContentScale.Crop
+                        )
+                    }
+
+                    Text(
+                        text = "Привет! 👋",
+                        color = Color(0xFFFF6B35),
+                        fontSize = 28.sp,
+                        fontWeight = FontWeight.Bold,
+                        textAlign = TextAlign.Center
+                    )
+
+                    Text(
+                        text = "В этом чате пока нет сообщений.\nНачните общение и отправьте первое сообщение!",
+                        color = Color.White.copy(alpha = 0.8f),
+                        fontSize = 16.sp,
+                        textAlign = TextAlign.Center,
+                        lineHeight = 22.sp
+                    )
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = "🧡",
+                            fontSize = 24.sp
+                        )
+                        Text(
+                            text = "Приятного общения!",
+                            color = Color(0xFFFF6B35),
+                            fontSize = 18.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "🧡",
+                            fontSize = 24.sp
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
 fun ChatTopBar(
     friendName: String,
     friendPhoto: String?,
     onBack: () -> Unit
 ) {
-    val statusBarHeight = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-
     Surface(
         modifier = Modifier
             .fillMaxWidth()
-            .height(72.dp + statusBarHeight)
+            .height(72.dp)
             .shadow(
                 elevation = 8.dp,
                 shape = RoundedCornerShape(bottomStart = 16.dp, bottomEnd = 16.dp)
@@ -267,7 +535,6 @@ fun ChatTopBar(
                         )
                     )
                 )
-                .padding(top = statusBarHeight)
         ) {
             Row(
                 modifier = Modifier
@@ -324,104 +591,6 @@ fun ChatTopBar(
                     fontWeight = FontWeight.SemiBold,
                     modifier = Modifier.weight(1f)
                 )
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-fun MessageCard(
-    message: Message,
-    isOwnMessage: Boolean,
-    onLongClick: () -> Unit
-) {
-    val alignment = if (isOwnMessage) Alignment.CenterEnd else Alignment.CenterStart
-    val backgroundColor = if (isOwnMessage) {
-        listOf(Color(0xFFFF6B35), Color(0xFFFF8A5B))
-    } else {
-        listOf(Color(0xFF2A2A2A), Color(0xFF3A3A3A))
-    }
-    val textColor = if (isOwnMessage) Color.Black else Color.White
-    val formatter = SimpleDateFormat("HH:mm", Locale.getDefault())
-
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(horizontal = 4.dp),
-        contentAlignment = alignment
-    ) {
-        Card(
-            modifier = Modifier
-                .widthIn(max = 280.dp)
-                .combinedClickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = { },
-                    onLongClick = onLongClick
-                )
-                .shadow(
-                    elevation = 4.dp,
-                    shape = RoundedCornerShape(
-                        topStart = 16.dp,
-                        topEnd = 16.dp,
-                        bottomStart = if (isOwnMessage) 16.dp else 4.dp,
-                        bottomEnd = if (isOwnMessage) 4.dp else 16.dp
-                    )
-                ),
-            shape = RoundedCornerShape(
-                topStart = 16.dp,
-                topEnd = 16.dp,
-                bottomStart = if (isOwnMessage) 16.dp else 4.dp,
-                bottomEnd = if (isOwnMessage) 4.dp else 16.dp
-            ),
-            colors = CardDefaults.cardColors(containerColor = Color.Transparent)
-        ) {
-            Box(
-                modifier = Modifier
-                    .background(
-                        brush = Brush.linearGradient(
-                            colors = backgroundColor
-                        )
-                    )
-            ) {
-                Column(
-                    modifier = Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    SmartLinkText(
-                        text = message.content,
-                        color = textColor,
-                        fontSize = 15.sp,
-                        lineHeight = 20.sp
-                    )
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (isOwnMessage) {
-                            Text(
-                                text = when (message.status) {
-                                    "sent" -> "•"
-                                    "delivered" -> "••"
-                                    "read" -> "✓✓"
-                                    else -> ""
-                                },
-                                color = textColor.copy(alpha = 0.7f),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-
-                        Text(
-                            text = formatter.format(Date(message.timestamp)),
-                            color = textColor.copy(alpha = 0.7f),
-                            fontSize = 11.sp
-                        )
-                    }
-                }
             }
         }
     }

@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">Ofox Messenger</string>
+    <string name="title_activity_flappy">Flappy</string>
 </resources>

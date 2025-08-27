@@ -45,6 +45,7 @@ import android.net.Uri
 import android.os.Build
 import android.util.Log
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.platform.LocalUriHandler
 import com.SkrinVex.OfoxMessenger.ui.theme.OfoxMessengerTheme
 import com.google.firebase.auth.FirebaseAuth
@@ -79,6 +80,10 @@ class SplashActivity : ComponentActivity() {
                 SplashScreen()
             }
         }
+
+        if (intent.getBooleanExtra("open_game", false)) {
+            startActivity(Intent(this, com.SkrinVex.OfoxMessenger.games.Flappy::class.java))
+        }
     }
 }
 
@@ -90,6 +95,8 @@ fun SplashScreen() {
     var showForceUpdateDialog by remember { mutableStateOf(false) }
     var showBlockedDialog by remember { mutableStateOf(false) }
     var showCorruptedDataDialog by remember { mutableStateOf(false) }
+    var tapCount by remember { mutableStateOf(0) }
+    var lastTapTime by remember { mutableStateOf(0L) }
 
     // Упрощенные анимации для быстродействия
     val infiniteTransition = rememberInfiniteTransition(label = "splash_animation")
@@ -296,16 +303,20 @@ fun SplashScreen() {
             }
 
             // Переход к нужному активити
+            val flappyPrefs = context.getSharedPreferences("flappy_prefs", Context.MODE_PRIVATE)
+            val openGame = flappyPrefs.getBoolean("open_game", false)
+            flappyPrefs.edit().remove("open_game").apply()
+
             val intent = if (profile.containsKey("username")) {
                 Intent(context, MainPageActivity::class.java).apply {
                     putExtra("uid", uid)
+                    putExtra("open_game", openGame)
                 }
             } else {
                 Intent(context, ProfileEditActivity::class.java).apply {
                     putExtra("uid", uid)
                 }
             }
-
             context.startActivity(intent)
             (context as? ComponentActivity)?.finish()
 
@@ -354,14 +365,76 @@ fun SplashScreen() {
                     contentAlignment = Alignment.Center
                 ) {
                     // Центральный логотип без сложных анимаций
-                    Image(
-                        painter = painterResource(id = R.drawable.logo),
-                        contentDescription = "Logo",
-                        modifier = Modifier
-                            .size(80.dp)
-                            .scale(logoScale)
-                            .clip(RoundedCornerShape(16.dp))
-                    )
+                    Box(
+                        modifier = Modifier.size(80.dp),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Image(
+                            painter = painterResource(id = R.drawable.logo),
+                            contentDescription = "Logo",
+                            modifier = Modifier
+                                .size(80.dp)
+                                .scale(logoScale)
+                                .clip(RoundedCornerShape(16.dp))
+                                .clickable {
+                                    val now = System.currentTimeMillis()
+                                    if (now - lastTapTime > 1000) tapCount = 0
+                                    tapCount++
+                                    lastTapTime = now
+                                    if (tapCount >= 5) {
+                                        tapCount = 0
+                                        context.getSharedPreferences("flappy_prefs", Context.MODE_PRIVATE)
+                                            .edit()
+                                            .putBoolean("open_game", true)
+                                            .apply()
+                                    }
+                                }
+                        )
+
+                        // 🔥 Подсказка-“тапы” при старте
+                        val hintCircles = remember { mutableStateListOf<Int>() }
+
+                        LaunchedEffect(Unit) {
+                            repeat(3) { i ->  // три волны
+                                delay(400L * i) // задержка между ними
+                                hintCircles.add(i)
+                                delay(400)
+                                hintCircles.remove(i)
+                            }
+                        }
+
+                        hintCircles.forEach { key ->
+                            // у каждой волны свои Animatable, запоминаются по ключу
+                            val scale = remember(key) { Animatable(0f) }
+                            val alpha = remember(key) { Animatable(1f) }
+
+                            LaunchedEffect(key) {
+                                launch {
+                                    scale.animateTo(
+                                        targetValue = 1.5f,
+                                        animationSpec = tween(600, easing = FastOutSlowInEasing)
+                                    )
+                                }
+                                launch {
+                                    alpha.animateTo(
+                                        targetValue = 0f,
+                                        animationSpec = tween(600)
+                                    )
+                                }
+                            }
+
+                            Box(
+                                modifier = Modifier
+                                    .size(80.dp)
+                                    .scale(scale.value)
+                                    .border(
+                                        width = 2.dp,
+                                        color = Color(0xFFFF6B35).copy(alpha = alpha.value),
+                                        shape = CircleShape
+                                    )
+                            )
+                        }
+                    }
                 }
             }
 
