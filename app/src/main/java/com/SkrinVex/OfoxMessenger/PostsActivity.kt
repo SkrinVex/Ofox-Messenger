@@ -283,7 +283,7 @@ fun PostsScreen(viewModel: PostsViewModel) {
                     if (filteredPosts.isNotEmpty()) {
                         items(
                             items = filteredPosts,
-                            key = { post -> post.id ?: "" }
+                            key = { post -> post.id }
                         ) { post ->
                             PostCard(
                                 post = post,

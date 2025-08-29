@@ -46,7 +46,7 @@ data class PostsState(
 )
 
 data class PostItem(
-    val id: String? = null,
+    val id: String, // ← убрал "?"
     val user_id: String,
     val username: String? = null,
     val nickname: String? = null,
@@ -103,22 +103,22 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                     FirebaseDatabase.getInstance()
                         .getReference("posts")
                         .orderByChild("created_at")
-                        .limitToLast(2) // Загружаем 2 самых новых поста
+                        .limitToLast(2)
                         .get()
                         .await()
                 }
                 val postsList = mutableListOf<PostItem>()
-                postsSnapshot.children.reversed().forEach { child -> // Реверс для новых сверху
+                postsSnapshot.children.reversed().forEach { child ->
                     val map = child.value as? Map<String, Any> ?: return@forEach
                     val post = processPostSnapshot(child, map)
-                    if (post != null && !postsList.any { it.id == post.id }) {
+                    if (post != null) {
                         postsList.add(post)
                     }
                 }
 
                 _state.value = PostsState(
                     isLoading = false,
-                    posts = postsList,
+                    posts = postsList.distinctBy { it.id }, // ← фильтрация дубликатов
                     friends = friendsList,
                     hasMorePosts = postsSnapshot.childrenCount >= 2,
                     lastPostTimestamp = postsList.lastOrNull()?.created_at
@@ -142,13 +142,13 @@ class PostsViewModel(private val uid: String) : ViewModel() {
             _state.value = _state.value.copy(isLoadingMore = true)
             try {
                 val lastTimestamp = _state.value.lastPostTimestamp ?: return@launch
-                val existingPostIds = _state.value.posts.mapNotNull { it.id }.toSet() // Собираем ID уже загруженных постов
+                val existingPostIds = _state.value.posts.map { it.id }.toSet()
                 val postsSnapshot = withContext(Dispatchers.IO) {
                     FirebaseDatabase.getInstance()
                         .getReference("posts")
                         .orderByChild("created_at")
-                        .endBefore(lastTimestamp) // Посты старше последнего загруженного
-                        .limitToLast(5) // Порция из 5 постов
+                        .endBefore(lastTimestamp)
+                        .limitToLast(5)
                         .get()
                         .await()
                 }
@@ -160,7 +160,11 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                         additionalPosts.add(post)
                     }
                 }
-                val updatedPosts = (_state.value.posts + additionalPosts).sortedByDescending { it.created_at }
+
+                val updatedPosts = (_state.value.posts + additionalPosts)
+                    .distinctBy { it.id } // ← фильтрация
+                    .sortedByDescending { it.created_at }
+
                 _state.value = _state.value.copy(
                     posts = updatedPosts,
                     isLoadingMore = false,
@@ -221,10 +225,14 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                     .get()
                     .await()
             }
-            val reactions = reactionsSnapshot.children.associate { it.key!! to it.getValue(String::class.java) }
+
+            val reactions: Map<String, String?> = reactionsSnapshot.children.associate {
+                it.key!! to it.getValue(String::class.java)
+            }
             val userReaction = reactions[uid]
+
             PostItem(
-                id = child.key,
+                id = child.key ?: return null,
                 user_id = map["user_id"] as? String ?: "",
                 username = userData?.get("username") as? String,
                 nickname = userData?.get("nickname") as? String,
@@ -238,6 +246,7 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                 likes = reactions,
                 userReaction = userReaction
             )
+
         } catch (e: Exception) {
             Log.e(TAG, "Error processing post snapshot: ${e.message}", e)
             null
@@ -522,7 +531,11 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                     likes = emptyMap(),
                     userReaction = null
                 )
-                _state.value = _state.value.copy(posts = (_state.value.posts + newPost).sortedByDescending { it.created_at })
+                _state.value = _state.value.copy(
+                    posts = (_state.value.posts + newPost)
+                        .distinctBy { it.id } // ← фильтрация
+                        .sortedByDescending { it.created_at }
+                )
 
                 onComplete(true, "Пост создан успешно")
             } catch (e: Exception) {
@@ -788,7 +801,9 @@ class PostsViewModel(private val uid: String) : ViewModel() {
 
                         // Обновляем состояние
                         _state.value = _state.value.copy(
-                            posts = currentPosts.sortedByDescending { it.created_at }
+                            posts = currentPosts
+                                .distinctBy { it.id } // ← фильтрация
+                                .sortedByDescending { it.created_at }
                         )
                     } catch (e: Exception) {
                         Log.e(TAG, "Error in posts listener: ${e.message}", e)
