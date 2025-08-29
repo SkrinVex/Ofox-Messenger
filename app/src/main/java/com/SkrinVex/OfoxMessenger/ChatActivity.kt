@@ -28,6 +28,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material3.*
@@ -120,10 +121,66 @@ fun ChatScreen(
     var selectedMessage by remember { mutableStateOf<Message?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
 
-    LaunchedEffect(state.messages) {
-        if (state.messages.isNotEmpty()) {
-            scope.launch {
-                lazyListState.animateScrollToItem(state.messages.size - 1)
+    // Сохраняем позицию скролла при загрузке новых сообщений
+    var savedScrollPosition by remember { mutableStateOf<Int?>(null) }
+    var savedScrollOffset by remember { mutableStateOf(0) }
+
+    // Track if user is at the bottom (within 3 messages from the end)
+    val isAtBottom by remember {
+        derivedStateOf {
+            val layoutInfo = lazyListState.layoutInfo
+            val totalItems = layoutInfo.totalItemsCount
+            if (totalItems == 0) true
+            else {
+                val lastVisibleItemIndex = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                lastVisibleItemIndex >= totalItems - 3
+            }
+        }
+    }
+
+    // Проверяем загрузку дополнительных сообщений
+    LaunchedEffect(lazyListState.firstVisibleItemIndex, lazyListState.firstVisibleItemScrollOffset) {
+        if (lazyListState.firstVisibleItemIndex == 0 &&
+            lazyListState.firstVisibleItemScrollOffset == 0 &&
+            state.canLoadMore &&
+            !state.isLoadingMore
+        ) {
+            // Сохраняем текущую позицию перед загрузкой
+            val currentFirstVisible = lazyListState.firstVisibleItemIndex
+            val currentOffset = lazyListState.firstVisibleItemScrollOffset
+
+            savedScrollPosition = currentFirstVisible
+            savedScrollOffset = currentOffset
+
+            viewModel.loadMoreMessages()
+        }
+    }
+
+    // Восстанавливаем позицию скролла после загрузки новых сообщений
+    LaunchedEffect(state.messages.size, state.isLoadingMore) {
+        if (!state.isLoadingMore && savedScrollPosition != null) {
+            // Вычисляем новую позицию с учетом добавленных сообщений
+            val previousMessageCount = state.messages.size - (savedScrollPosition!! + 1)
+            val newPosition = state.messages.size - previousMessageCount - 1
+
+            if (newPosition >= 0) {
+                lazyListState.scrollToItem(newPosition, savedScrollOffset)
+            }
+
+            savedScrollPosition = null
+            savedScrollOffset = 0
+        }
+    }
+
+    // Автоскролл только для собственных новых сообщений
+    LaunchedEffect(state.messages.size) {
+        if (state.messages.isNotEmpty() && !state.isLoadingMore) {
+            val lastMessage = state.messages.last()
+            // Скроллим вниз только если это наше сообщение ИЛИ мы уже внизу
+            if (lastMessage.senderId == FirebaseAuth.getInstance().currentUser?.uid || isAtBottom) {
+                scope.launch {
+                    lazyListState.animateScrollToItem(state.messages.size - 1)
+                }
             }
         }
     }
@@ -137,7 +194,7 @@ fun ChatScreen(
         }
     }
 
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxSize()
             .background(
@@ -151,74 +208,147 @@ fun ChatScreen(
             )
             .statusBarsPadding()
     ) {
-        // Фиксированный ToolBar
-        ChatTopBar(
-            friendName = friendName,
-            friendPhoto = friendPhoto,
-            onBack = onBack
-        )
-
-        // Контент чата
-        Box(
-            modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth()
+        Column(
+            modifier = Modifier.fillMaxSize()
         ) {
-            when {
-                state.isLoading -> {
-                    // Показываем крутилку
-                    Box(
-                        modifier = Modifier.fillMaxSize(),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        CircularProgressIndicator(color = Color(0xFFFF6B35))
+            // Фиксированный ToolBar
+            ChatTopBar(
+                friendName = friendName,
+                friendPhoto = friendPhoto,
+                onBack = onBack
+            )
+
+            // Контент чата
+            Box(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxWidth()
+            ) {
+                when {
+                    state.isLoading -> {
+                        // Показываем крутилку только при первичной загрузке
+                        Box(
+                            modifier = Modifier.fillMaxSize(),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            CircularProgressIndicator(color = Color(0xFFFF6B35))
+                        }
                     }
-                }
-                state.messages.isEmpty() -> {
-                    EmptyChatPlaceholder()
-                }
-                else -> {
-                    LazyColumn(
-                        state = lazyListState,
-                        modifier = Modifier.fillMaxSize(),
-                        contentPadding = PaddingValues(
-                            start = 12.dp,
-                            end = 12.dp,
-                            top = 8.dp,
-                            bottom = 16.dp
-                        ),
-                        verticalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        groupedMessages.entries.sortedBy { it.key }.forEach { (dateKey, messages) ->
-                            stickyHeader {
-                                DateHeader(
-                                    date = displayDateFormatter.format(dateFormatter.parse(dateKey) ?: Date())
-                                )
+                    state.messages.isEmpty() -> {
+                        EmptyChatPlaceholder()
+                    }
+                    else -> {
+                        Box(modifier = Modifier.fillMaxSize()) {
+                            LazyColumn(
+                                state = lazyListState,
+                                modifier = Modifier.fillMaxSize(),
+                                contentPadding = PaddingValues(
+                                    start = 12.dp,
+                                    end = 12.dp,
+                                    top = 8.dp,
+                                    bottom = 16.dp
+                                ),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                groupedMessages.entries.sortedBy { it.key }.forEach { (dateKey, messages) ->
+                                    stickyHeader {
+                                        DateHeader(
+                                            date = displayDateFormatter.format(dateFormatter.parse(dateKey) ?: Date())
+                                        )
+                                    }
+                                    items(messages) { message ->
+                                        MessageCard(
+                                            message = message,
+                                            isOwnMessage = message.senderId == FirebaseAuth.getInstance().currentUser?.uid,
+                                            onLongClick = { selectedMessage = message }
+                                        )
+                                    }
+                                }
                             }
-                            items(messages) { message ->
-                                MessageCard(
-                                    message = message,
-                                    isOwnMessage = message.senderId == FirebaseAuth.getInstance().currentUser?.uid,
-                                    onLongClick = { selectedMessage = message }
-                                )
+
+                            // Индикатор загрузки сверху
+                            androidx.compose.animation.AnimatedVisibility(
+                                visible = state.isLoadingMore,
+                                enter = fadeIn(animationSpec = tween(200)) + scaleIn(initialScale = 0.8f),
+                                exit = fadeOut(animationSpec = tween(200)) + scaleOut(targetScale = 0.8f),
+                                modifier = Modifier
+                                    .align(Alignment.TopCenter)
+                                    .padding(top = 16.dp)
+                            ) {
+                                Surface(
+                                    modifier = Modifier
+                                        .wrapContentSize()
+                                        .shadow(4.dp, CircleShape),
+                                    shape = CircleShape,
+                                    color = Color(0xFF2A2A2A).copy(alpha = 0.9f)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        CircularProgressIndicator(
+                                            modifier = Modifier.size(16.dp),
+                                            color = Color(0xFFFF6B35),
+                                            strokeWidth = 2.dp
+                                        )
+                                        Text(
+                                            text = "Загружаем сообщения...",
+                                            color = Color.White,
+                                            fontSize = 12.sp
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
                 }
-            }
-        }
 
-        // Поле ввода с отступами
-        MessageInputField(
-            messageText = state.messageText,
-            onMessageChange = viewModel::updateMessageText,
-            onSendClick = { viewModel.sendMessage() },
-            isSending = state.isSending,
-            modifier = Modifier
-                .fillMaxWidth()
-                .windowInsetsPadding(WindowInsets.ime)
-                .navigationBarsPadding() // Отступ от навигационной панели
-        )
+                // Scroll to bottom button
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = !isAtBottom,
+                    enter = fadeIn(animationSpec = tween(200)) + scaleIn(initialScale = 0.8f, animationSpec = tween(200)),
+                    exit = fadeOut(animationSpec = tween(200)) + scaleOut(targetScale = 0.8f, animationSpec = tween(200)),
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(bottom = 30.dp, end = 16.dp)
+                ) {
+                    FloatingActionButton(
+                        onClick = {
+                            scope.launch {
+                                if (state.messages.isNotEmpty()) {
+                                    lazyListState.animateScrollToItem(state.messages.size - 1)
+                                }
+                            }
+                        },
+                        containerColor = Color(0xFFFF6B35),
+                        contentColor = Color.White,
+                        shape = CircleShape,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .shadow(6.dp, CircleShape)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.ArrowDownward,
+                            contentDescription = "Scroll to bottom",
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
+            }
+
+            // Поле ввода с отступами
+            MessageInputField(
+                messageText = state.messageText,
+                onMessageChange = viewModel::updateMessageText,
+                onSendClick = { viewModel.sendMessage() },
+                isSending = state.isSending,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .windowInsetsPadding(WindowInsets.ime)
+                    .navigationBarsPadding()
+            )
+        }
 
         // Bottom sheet для действий с сообщениями
         if (selectedMessage != null) {
