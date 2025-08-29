@@ -1,20 +1,26 @@
 package com.SkrinVex.OfoxMessenger
 
+import android.app.Activity
 import android.app.Application
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Bundle
 import androidx.core.app.ActivityCompat
 import coil.ImageLoader
 import coil.decode.SvgDecoder
 import coil.disk.DiskCache
 import coil.memory.MemoryCache
 import com.SkrinVex.OfoxMessenger.utils.CrashHandler
+import com.google.firebase.Firebase
 import com.google.firebase.FirebaseApp
-import com.google.firebase.FirebaseOptions
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.DatabaseException
 import com.google.firebase.database.FirebaseDatabase
+import com.google.firebase.database.database
+import com.google.firebase.database.ktx.database
 import org.json.JSONObject
 import java.io.InputStream
+import java.util.concurrent.atomic.AtomicInteger
 
 object PermissionState {
     var needsNotificationPermission = false
@@ -34,10 +40,13 @@ object DbConfig {
     var useDev = true
 }
 
-class App : Application() {
+class App : Application(), Application.ActivityLifecycleCallbacks {
 
     lateinit var imageLoader: ImageLoader
         private set
+
+    // счётчик активных Activity
+    private val activityCount = AtomicInteger(0)
 
     override fun onCreate() {
         super.onCreate()
@@ -62,6 +71,20 @@ class App : Application() {
 
         initImageLoader()
         checkNotificationPermission()
+
+        // регистрируем коллбэки жизненного цикла Activity
+        registerActivityLifecycleCallbacks(this)
+    }
+
+    private fun updateLastActivity() {
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        FirebaseDatabase.getInstance()
+            .getReference("users/$uid/lastActivity")
+            .setValue(System.currentTimeMillis())
+    }
+
+    override fun onActivityResumed(activity: Activity) {
+        updateLastActivity()
     }
 
     private fun initImageLoader() {
@@ -105,4 +128,36 @@ class App : Application() {
         imageLoader.memoryCache?.clear()
         imageLoader.diskCache?.clear()
     }
+
+    // ------------------------------
+    // ActivityLifecycleCallbacks
+    // ------------------------------
+
+    override fun onActivityStarted(activity: Activity) {
+        val count = activityCount.incrementAndGet()
+        if (count == 1) {
+            // приложение стало видимым — ставим ONLINE
+            setUserOnline(true)
+        }
+    }
+
+    override fun onActivityStopped(activity: Activity) {
+        val count = activityCount.decrementAndGet()
+        if (count == 0) {
+            // приложение полностью скрыто — ставим OFFLINE
+            setUserOnline(false)
+        }
+    }
+
+    private fun setUserOnline(isOnline: Boolean) {
+        val uid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: return
+        val ref = Firebase.database.getReference("users/$uid/online")
+        ref.setValue(isOnline)
+    }
+
+    // Остальные коллбэки можно оставить пустыми
+    override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
+    override fun onActivityPaused(activity: Activity) {}
+    override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}
+    override fun onActivityDestroyed(activity: Activity) {}
 }

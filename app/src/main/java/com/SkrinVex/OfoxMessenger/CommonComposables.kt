@@ -20,9 +20,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
 
 @Composable
 fun ModernToggle(
@@ -257,4 +259,83 @@ fun DeleteConfirmationDialog(
         },
         containerColor = Color(0xFF1E1E1E).copy(alpha = 0.95f)
     )
+}
+
+@Composable
+fun MascotDialog(
+    mascotRes: Int,         // ресурс маскота (например R.drawable.mascot)
+    title: String,
+    message: String,
+    confirmText: String = "Ок",
+    onConfirm: () -> Unit,
+    dismissText: String? = null,
+    onDismiss: (() -> Unit)? = null
+) {
+    Dialog(onDismissRequest = { onDismiss?.invoke() }) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(24.dp),
+            shape = RoundedCornerShape(24.dp),
+            color = Color(0xFF1E1E1E).copy(alpha = 0.97f),
+            tonalElevation = 6.dp,
+            shadowElevation = 6.dp
+        ) {
+            Column(
+                modifier = Modifier.padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
+                // 👉 Маскот сверху
+                androidx.compose.foundation.Image(
+                    painter = painterResource(id = mascotRes),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(96.dp)
+                        .padding(bottom = 12.dp)
+                )
+
+                // 👉 Заголовок
+                Text(
+                    text = title,
+                    color = Color.White,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 20.sp,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+
+                // 👉 Сообщение
+                Text(
+                    text = message,
+                    color = Color.White.copy(alpha = 0.9f),
+                    fontSize = 16.sp,
+                    modifier = Modifier.padding(bottom = 20.dp),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                )
+
+                // 👉 Кнопки
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    if (dismissText != null && onDismiss != null) {
+                        OutlinedButton(
+                            onClick = onDismiss,
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                containerColor = Color(0xFF2A2A2A),
+                                contentColor = Color.White
+                            )
+                        ) {
+                            Text(dismissText)
+                        }
+                    }
+                    Button(
+                        onClick = onConfirm,
+                        colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF6B35))
+                    ) {
+                        Text(confirmText, color = Color.Black, fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
+    }
 }

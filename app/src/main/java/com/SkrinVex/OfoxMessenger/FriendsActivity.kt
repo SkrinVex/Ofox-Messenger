@@ -268,22 +268,43 @@ fun FriendCard(user: Friend, onClick: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            AsyncImage(
-                model = ImageRequest.Builder(context)
-                    .data(user.profile_photo?.takeIf { it.isNotBlank() })
-                    .placeholder(R.drawable.logo)
-                    .error(R.drawable.logo)
-                    .diskCacheKey(user.profile_photo)   // 👈 для дискового кэша
-                    .memoryCacheKey(user.profile_photo) // 👈 для RAM-кэша
-                    .build(),
-                contentDescription = "Фото пользователя",
-                imageLoader = imageLoader, // 👈 подключаем глобальный
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(Color(0xFF333333)),
-                contentScale = ContentScale.Crop
-            )
+            Box {
+                AsyncImage(
+                    model = ImageRequest.Builder(context)
+                        .data(user.profile_photo?.takeIf { it.isNotBlank() })
+                        .placeholder(R.drawable.logo)
+                        .error(R.drawable.logo)
+                        .diskCacheKey(user.profile_photo)
+                        .memoryCacheKey(user.profile_photo)
+                        .build(),
+                    contentDescription = "Фото пользователя",
+                    imageLoader = imageLoader,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF333333)),
+                    contentScale = ContentScale.Crop
+                )
+
+                // Онлайн индикатор
+                if (user.isOnline) {
+                    Box(
+                        modifier = Modifier
+                            .size(16.dp)
+                            .align(Alignment.BottomEnd)
+                            .offset(x = 2.dp, y = 2.dp)
+                            .background(Color(0xFF101010), CircleShape) // темная обводка
+                            .padding(2.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color(0xFF00C851), CircleShape) // зеленый кружок
+                        )
+                    }
+                }
+            }
+
             Column {
                 Text(
                     text = user.nickname ?: user.username,

@@ -81,6 +81,8 @@ class FriendsViewModel(private val uid: String) : ViewModel() {
                             users = emptyList(),
                             isLoading = false
                         )
+                        // Запускаем слушатели онлайн статуса для найденных друзей
+                        setupOnlineStatusListeners(friendsList.map { it.id })
                     } else {
                         // среди друзей нет — идем в поиск по пользователям
                         searchMode = true
@@ -100,6 +102,8 @@ class FriendsViewModel(private val uid: String) : ViewModel() {
                         users = emptyList(),
                         isLoading = false
                     )
+                    // Запускаем слушатели онлайн статуса для всех друзей
+                    setupOnlineStatusListeners(friendsList.map { it.id })
                 }
 
             } catch (e: Exception) {
@@ -150,7 +154,8 @@ class FriendsViewModel(private val uid: String) : ViewModel() {
                         username = m["username"] as? String ?: "",
                         nickname = m["nickname"] as? String,
                         status = m["status"] as? String,
-                        profile_photo = m["profile_photo"] as? String
+                        profile_photo = m["profile_photo"] as? String,
+                        isOnline = m["online"] as? Boolean ?: false
                     )
 
                     if (searchQuery.isNullOrBlank() ||
@@ -164,10 +169,99 @@ class FriendsViewModel(private val uid: String) : ViewModel() {
                     users = allUsers,
                     isLoading = false
                 )
+
+                // Добавляем слушатели онлайн статуса для новых пользователей
+                val newUserIds = newUsers.map { it.id }
+                if (newUserIds.isNotEmpty()) {
+                    setupOnlineStatusListenersForNewUsers(newUserIds)
+                }
+
             } catch (e: Exception) {
                 Log.e("FriendsVM", "loadMoreUsers error: ${e.message}")
             }
         }
+    }
+
+    private fun setupOnlineStatusListenersForNewUsers(userIds: List<String>) {
+        userIds.forEach { userId ->
+            // Не добавляем если уже есть слушатель для этого пользователя
+            if (!onlineStatusListeners.containsKey(userId)) {
+                val listener = object : ValueEventListener {
+                    override fun onDataChange(snapshot: DataSnapshot) {
+                        val isOnline = snapshot.getValue(Boolean::class.java) ?: false
+                        updateFriendOnlineStatus(userId, isOnline)
+                    }
+
+                    override fun onCancelled(error: DatabaseError) {
+                        Log.e("FriendsVM", "Online status listener cancelled: ${error.message}")
+                    }
+                }
+
+                FirebaseDatabase.getInstance()
+                    .getReference("users/$userId/online")
+                    .addValueEventListener(listener)
+
+                onlineStatusListeners[userId] = listener
+            }
+        }
+    }
+
+    private val onlineStatusListeners = mutableMapOf<String, ValueEventListener>()
+
+    private fun setupOnlineStatusListeners(friendIds: List<String>) {
+        // Очищаем старые слушатели
+        clearOnlineStatusListeners()
+
+        friendIds.forEach { friendId ->
+            val listener = object : ValueEventListener {
+                override fun onDataChange(snapshot: DataSnapshot) {
+                    val isOnline = snapshot.getValue(Boolean::class.java) ?: false
+                    updateFriendOnlineStatus(friendId, isOnline)
+                }
+
+                override fun onCancelled(error: DatabaseError) {
+                    Log.e("FriendsVM", "Online status listener cancelled: ${error.message}")
+                }
+            }
+
+            FirebaseDatabase.getInstance()
+                .getReference("users/$friendId/online")
+                .addValueEventListener(listener)
+
+            onlineStatusListeners[friendId] = listener
+        }
+    }
+
+    private fun updateFriendOnlineStatus(friendId: String, isOnline: Boolean) {
+        val currentState = _state.value
+        val updatedFriends = currentState.friends.map { friend ->
+            if (friend.id == friendId) friend.copy(isOnline = isOnline) else friend
+        }
+        val updatedUsers = currentState.users.map { user ->
+            if (user.id == friendId) user.copy(isOnline = isOnline) else user
+        }
+
+        _state.value = currentState.copy(
+            friends = updatedFriends,
+            users = updatedUsers
+        )
+    }
+
+    private fun clearOnlineStatusListeners() {
+        onlineStatusListeners.forEach { (friendId, listener) ->
+            FirebaseDatabase.getInstance()
+                .getReference("users/$friendId/online")
+                .removeEventListener(listener)
+        }
+        onlineStatusListeners.clear()
+    }
+
+    override fun onCleared() {
+        clearOnlineStatusListeners()
+        friendsListener?.let {
+            FirebaseDatabase.getInstance().getReference("users/$uid/friends").removeEventListener(it)
+        }
+        super.onCleared()
     }
 
     private suspend fun shouldHideUser(uid: String?): Boolean {
@@ -198,7 +292,8 @@ class FriendsViewModel(private val uid: String) : ViewModel() {
             username = m["username"] as? String ?: "",
             nickname = m["nickname"] as? String,
             status = m["status"] as? String,
-            profile_photo = m["profile_photo"] as? String
+            profile_photo = m["profile_photo"] as? String,
+            isOnline = m["online"] as? Boolean ?: false // добавляем получение онлайн статуса
         )
     }
 
@@ -222,13 +317,6 @@ class FriendsViewModel(private val uid: String) : ViewModel() {
         }
         FirebaseDatabase.getInstance().getReference("users/$uid/friends")
             .addValueEventListener(friendsListener!!)
-    }
-
-    override fun onCleared() {
-        friendsListener?.let {
-            FirebaseDatabase.getInstance().getReference("users/$uid/friends").removeEventListener(it)
-        }
-        super.onCleared()
     }
 }
 

@@ -296,11 +296,11 @@ fun ProfileHeader(
                             .data(if (url.isNotBlank()) url else null)
                             .fallback(android.R.drawable.ic_menu_gallery)
                             .error(android.R.drawable.ic_menu_gallery)
-                            .diskCacheKey(url) // 👈 ключ для дискового кэша
-                            .memoryCacheKey(url) // 👈 ключ для RAM-кэша
+                            .diskCacheKey(url)
+                            .memoryCacheKey(url)
                             .build(),
                         contentDescription = "Фон профиля",
-                        imageLoader = imageLoader, // 👈 теперь глобальный
+                        imageLoader = imageLoader,
                         modifier = Modifier.fillMaxSize(),
                         contentScale = ContentScale.Crop,
                         onState = { state ->
@@ -338,32 +338,22 @@ fun ProfileHeader(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(72.dp)
-                            .clip(CircleShape)
-                            .background(Color(0xFF333333))
-                            .clickable(enabled = !profile.profile_photo.isNullOrBlank()) {
-                                profile.profile_photo?.let { url ->
-                                    PhotoViewerActivity.start(context, url)
-                                }
-                            },
-                        contentAlignment = Alignment.Center
-                    ) {
+                    Box {
                         var isProfilePhotoLoading by remember { mutableStateOf(true) }
                         AsyncImage(
                             model = ImageRequest.Builder(LocalContext.current)
                                 .data(if (profile.profile_photo?.isNotBlank() == true) profile.profile_photo else null)
                                 .fallback(android.R.drawable.ic_menu_gallery)
                                 .error(android.R.drawable.ic_menu_gallery)
-                                .diskCacheKey(profile.profile_photo) // 👈 для диска
-                                .memoryCacheKey(profile.profile_photo) // 👈 для памяти
+                                .diskCacheKey(profile.profile_photo)
+                                .memoryCacheKey(profile.profile_photo)
                                 .build(),
                             contentDescription = "Фото профиля",
                             imageLoader = imageLoader,
                             modifier = Modifier
                                 .size(72.dp)
-                                .clip(CircleShape),
+                                .clip(CircleShape)
+                                .background(Color(0xFF333333)),
                             contentScale = ContentScale.Crop,
                             onState = { state ->
                                 isProfilePhotoLoading = state is AsyncImagePainter.State.Loading
@@ -375,6 +365,23 @@ fun ProfileHeader(
                                 modifier = Modifier.size(24.dp),
                                 strokeWidth = 2.dp
                             )
+                        }
+                        // Индикатор онлайн-статуса
+                        if (profile.isOnline && !isOwnProfile) {
+                            Box(
+                                modifier = Modifier
+                                    .size(16.dp)
+                                    .align(Alignment.BottomEnd)
+                                    .offset(x = 2.dp, y = 2.dp)
+                                    .background(Color(0xFF101010), CircleShape) // Темная обводка
+                                    .padding(2.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxSize()
+                                        .background(Color(0xFF00C851), CircleShape) // Зеленый кружок
+                                )
+                            }
                         }
                     }
 
@@ -458,7 +465,7 @@ fun ProfileHeader(
                                     isLoading = isProcessing,
                                     modifier = Modifier.weight(1f),
                                     onClick = {
-                                        viewModel.acceptFriendRequest(profile.user_id, notificationId) { success, message -> // Исправлено: добавлен notificationId
+                                        viewModel.acceptFriendRequest(profile.user_id, notificationId) { success, message ->
                                             Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                                         }
                                     }
@@ -471,7 +478,7 @@ fun ProfileHeader(
                                     isLoading = isProcessing,
                                     modifier = Modifier.weight(1f),
                                     onClick = {
-                                        viewModel.declineFriendRequest(profile.user_id, notificationId) { success, message -> // Исправлено: добавлен notificationId
+                                        viewModel.declineFriendRequest(profile.user_id, notificationId) { success, message ->
                                             Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                                         }
                                     }

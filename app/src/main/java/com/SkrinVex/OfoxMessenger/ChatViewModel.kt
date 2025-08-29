@@ -32,6 +32,13 @@ data class ChatState(
     val canLoadMore: Boolean = true
 )
 
+data class UserStatus(
+    val isOnline: Boolean = false,
+    val lastActive: Long? = null,
+    val isTyping: Boolean = false,
+    val inChatWith: String? = null
+)
+
 class ChatViewModel(
     private val currentUserId: String,
     private val friendUid: String
@@ -45,6 +52,7 @@ class ChatViewModel(
 
     private var newMessagesListener: ChildEventListener? = null  // Для удаления при необходимости
     private var currentMaxTimestamp: Long = 0L  // Для listener на новые сообщения
+    private var friendStatusListener: ValueEventListener? = null
 
     init {
         loadInitialMessages()
@@ -58,8 +66,57 @@ class ChatViewModel(
         }
     }
 
+    fun startFriendStatusListener() {
+        val ref = FirebaseDatabase.getInstance().getReference("users/$friendUid")
+        friendStatusListener = ref.addValueEventListener(object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val isOnline = snapshot.child("online").getValue(Boolean::class.java) ?: false
+                val lastActivity = snapshot.child("lastActivity").getValue(Long::class.java) // Changed from last_active
+                val isTyping = snapshot.child("typing").getValue(Boolean::class.java) ?: false
+                val inChatWith = snapshot.child("in_chat_with").getValue(String::class.java)
+
+                _friendStatus.value = UserStatus(
+                    isOnline = isOnline,
+                    lastActive = lastActivity, // Changed from lastActivity
+                    isTyping = isTyping,
+                    inChatWith = inChatWith
+                )
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                Log.e("ChatViewModel", "Friend status listener cancelled: ${error.message}")
+            }
+        })
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        newMessagesListener?.let { chatRef.removeEventListener(it) }
+        friendStatusListener?.let {
+            FirebaseDatabase.getInstance().getReference("users/$friendUid")
+                .removeEventListener(it)
+        }
+    }
+
     fun updateMessageText(text: String) {
         _state.value = _state.value.copy(messageText = text)
+
+        val typing = text.isNotBlank()
+        FirebaseDatabase.getInstance()
+            .getReference("users/$currentUserId/typing")
+            .setValue(typing)
+            .addOnFailureListener { exception ->
+                Log.e("ChatViewModel", "Error updating typing status: ${exception.message}")
+            }
+    }
+
+    private fun clearTypingStatus() {
+        FirebaseDatabase.getInstance()
+            .getReference("users/$currentUserId/typing")
+            .setValue(false)
+            .addOnFailureListener { exception ->
+                Log.e("ChatViewModel", "Error clearing typing status: ${exception.message}")
+            }
     }
 
     fun sendMessage() {
@@ -88,6 +145,9 @@ class ChatViewModel(
                     error = null
                 )
 
+                // Clear typing status immediately after clearing message text
+                clearTypingStatus()
+
                 // Сохраняем в БД
                 val message = mapOf(
                     "id" to messageId,
@@ -107,23 +167,33 @@ class ChatViewModel(
                     .setValue("delivered")
                     .await()
 
-                // --- Пуш в фоне ---
-                viewModelScope.launch {
-                    try {
-                        val api = ApiService.create()
-                        val response = api.sendNotification(
-                            type = "chat_message",
-                            fromUid = currentUserId,
-                            toUid = friendUid,
-                            message = textToSend,   // <--- ФИКС, а не _state.value.messageText
-                            chatId = chatId,
-                            messageId = messageId
-                        )
-                        if (!response.isSuccessful) {
-                            Log.e("ChatViewModel", "Ошибка пуша: ${response.errorBody()?.string()}")
+                // --- Проверяем, сидит ли собеседник прямо в чате с нами ---
+                val friendSnapshot = FirebaseDatabase.getInstance()
+                    .getReference("users/$friendUid/in_chat_with")
+                    .get()
+                    .await()
+
+                val isFriendInChatWithMe = friendSnapshot.getValue(String::class.java) == currentUserId
+
+                // --- Пуш отправляем ТОЛЬКО если он НЕ в чате ---
+                if (!isFriendInChatWithMe) {
+                    viewModelScope.launch {
+                        try {
+                            val api = ApiService.create()
+                            val response = api.sendNotification(
+                                type = "chat_message",
+                                fromUid = currentUserId,
+                                toUid = friendUid,
+                                message = textToSend,
+                                chatId = chatId,
+                                messageId = messageId
+                            )
+                            if (!response.isSuccessful) {
+                                Log.e("ChatViewModel", "Ошибка пуша: ${response.errorBody()?.string()}")
+                            }
+                        } catch (e: Exception) {
+                            Log.e("ChatViewModel", "Ошибка вызова API пуша: ${e.message}", e)
                         }
-                    } catch (e: Exception) {
-                        Log.e("ChatViewModel", "Ошибка вызова API пуша: ${e.message}", e)
                     }
                 }
 
@@ -176,8 +246,26 @@ class ChatViewModel(
                     isSending = false,
                     error = "Ошибка: ${e.message}"
                 )
+                // Clear typing even on error
+                clearTypingStatus()
             }
         }
+    }
+
+    private val _friendStatus = MutableStateFlow(UserStatus())
+    val friendStatus: StateFlow<UserStatus> = _friendStatus.asStateFlow()
+
+    fun setInChat(friendUid: String?) {
+        val uid = currentUserId
+        FirebaseDatabase.getInstance()
+            .getReference("users/$uid/in_chat_with")
+            .setValue(friendUid)
+    }
+
+    fun clearTyping() {
+        FirebaseDatabase.getInstance()
+            .getReference("users/$currentUserId/typing")
+            .setValue(false)
     }
 
     fun extractMentions(text: String): List<String> {
@@ -396,11 +484,6 @@ class ChatViewModel(
             timestamp = (data["timestamp"] as? Long) ?: 0L,
             status = data["status"] as? String ?: "sent"
         )
-    }
-
-    override fun onCleared() {
-        super.onCleared()
-        newMessagesListener?.let { chatRef.removeEventListener(it) }
     }
 }
 

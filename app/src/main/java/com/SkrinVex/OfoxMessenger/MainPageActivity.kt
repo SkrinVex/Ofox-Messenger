@@ -328,21 +328,33 @@ fun UserHeaderCard(profile: ProfileCheckResponse, onClick: () -> Unit) {
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(modifier = Modifier.height(4.dp))
-                Text(
-                    text = "Профиль заполнен на ${profile.profile_completion}%",
-                    color = Color.Gray,
-                    fontSize = 14.sp
-                )
-                Spacer(modifier = Modifier.height(8.dp))
-                LinearProgressIndicator(
-                    progress = (profile.profile_completion ?: 0) / 100f,
+
+                var showStatusDialog by remember { mutableStateOf(false) }
+
+                Box(
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(6.dp)
-                        .clip(CircleShape),
-                    color = Color(0xFFFF6B35),
-                    trackColor = Color(0xFF333333)
-                )
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(Color(0xFF2E7D32))
+                        .clickable { showStatusDialog = true }
+                        .padding(horizontal = 10.dp, vertical = 4.dp)
+                ) {
+                    Text(
+                        text = "В сети",
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
+                if (showStatusDialog) {
+                    MascotDialog(
+                        mascotRes = R.drawable.lisa,
+                        title = "Статус активности",
+                        message = "Этот статус отображает, что вы онлайн. Его видят все пользователи.",
+                        confirmText = "Понятно",
+                        onConfirm = { showStatusDialog = false }
+                    )
+                }
             }
         }
     }

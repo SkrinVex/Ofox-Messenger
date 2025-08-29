@@ -10,7 +10,13 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -37,6 +43,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -54,6 +61,7 @@ import com.SkrinVex.OfoxMessenger.ui.theme.OfoxMessengerTheme
 import com.SkrinVex.OfoxMessenger.utils.SmartLinkText
 import com.google.accompanist.systemuicontroller.rememberSystemUiController
 import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.database.FirebaseDatabase
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.*
@@ -77,6 +85,8 @@ class ChatActivity : ComponentActivity() {
             ChatViewModelFactory(FirebaseAuth.getInstance().currentUser?.uid ?: "", friendUid)
         }
 
+        viewModel.startFriendStatusListener()
+
         setContent {
             OfoxMessengerTheme {
                 ChatScreen(
@@ -87,6 +97,26 @@ class ChatActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+        val friendUid = intent.getStringExtra("friend_uid") ?: return
+
+        // Помечаем что мы в чате именно с этим пользователем
+        FirebaseDatabase.getInstance()
+            .getReference("users/$uid/in_chat_with")
+            .setValue(friendUid)
+    }
+
+    override fun onPause() {
+        super.onPause()
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
+
+        val ref = FirebaseDatabase.getInstance().getReference("users/$uid")
+        ref.child("in_chat_with").setValue(null)
+        ref.child("typing").setValue(false) // сброс "печатает"
     }
 }
 
@@ -120,6 +150,7 @@ fun ChatScreen(
     val scope = rememberCoroutineScope()
     var selectedMessage by remember { mutableStateOf<Message?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    val friendStatus by viewModel.friendStatus.collectAsState()
 
     // Сохраняем позицию скролла при загрузке новых сообщений
     var savedScrollPosition by remember { mutableStateOf<Int?>(null) }
@@ -215,6 +246,7 @@ fun ChatScreen(
             ChatTopBar(
                 friendName = friendName,
                 friendPhoto = friendPhoto,
+                status = friendStatus,
                 onBack = onBack
             )
 
@@ -640,6 +672,7 @@ fun EmptyChatPlaceholder() {
 fun ChatTopBar(
     friendName: String,
     friendPhoto: String?,
+    status: UserStatus, // <--- добавляем сюда
     onBack: () -> Unit
 ) {
     Surface(
@@ -714,16 +747,101 @@ fun ChatTopBar(
 
                 Spacer(modifier = Modifier.width(12.dp))
 
-                Text(
-                    text = friendName,
-                    color = Color.White,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.weight(1f)
-                )
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = friendName,
+                        color = Color.White,
+                        fontSize = 18.sp,
+                        fontWeight = FontWeight.SemiBold
+                    )
+
+                    // Fixed status logic
+                    AnimatedContent(
+                        targetState = status,
+                        label = "status_anim"
+                    ) { st ->
+                        when {
+                            st.isTyping && st.inChatWith == FirebaseAuth.getInstance().currentUser?.uid -> TypingDots()
+                            st.isOnline -> OnlineIndicator()
+                            st.lastActive != null -> LastSeenText(st.lastActive)
+                            else -> Text(
+                                text = "Оффлайн",
+                                color = Color.Gray,
+                                fontSize = 13.sp
+                            )
+                        }
+                    }
+                }
             }
         }
     }
+}
+
+@Composable
+fun OnlineIndicator() {
+    val infiniteTransition = rememberInfiniteTransition(label = "blink")
+    val alpha by infiniteTransition.animateFloat(
+        initialValue = 0.3f,
+        targetValue = 1f,
+        animationSpec = infiniteRepeatable(
+            animation = tween(800, easing = LinearEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "alpha"
+    )
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Box(
+            modifier = Modifier
+                .size(8.dp)
+                .clip(CircleShape)
+                .background(Color.Green.copy(alpha = alpha))
+        )
+        Spacer(modifier = Modifier.width(4.dp))
+        Text("В сети", color = Color.Gray, fontSize = 13.sp)
+    }
+}
+
+@Composable
+fun TypingDots() {
+    val infiniteTransition = rememberInfiniteTransition(label = "dots")
+    val scales = List(3) { i ->
+        infiniteTransition.animateFloat(
+            initialValue = 0.5f,
+            targetValue = 1.2f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 400, delayMillis = i * 150, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "dot$i"
+        )
+    }
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Печатает", color = Color.Gray, fontSize = 13.sp)
+        Spacer(modifier = Modifier.width(4.dp))
+        Row {
+            scales.forEach { scale ->
+                Box(
+                    modifier = Modifier
+                        .size(6.dp)
+                        .scale(scale.value)
+                        .clip(CircleShape)
+                        .background(Color.Gray)
+                )
+                Spacer(modifier = Modifier.width(2.dp))
+            }
+        }
+    }
+}
+
+@Composable
+fun LastSeenText(timestamp: Long) {
+    Text(
+        text = "Был(а) в сети: " + formatLastActive(timestamp),
+        color = Color.Gray,
+        fontSize = 13.sp
+    )
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -825,6 +943,16 @@ fun MessageInputField(
                 }
             }
         }
+    }
+}
+
+private fun formatLastActive(timestamp: Long): String {
+    val diff = System.currentTimeMillis() - timestamp
+    return when {
+        diff < 60_000 -> "только что"
+        diff < 3_600_000 -> "${diff / 60_000} мин. назад"
+        diff < 86_400_000 -> "${diff / 3_600_000} ч. назад"
+        else -> SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date(timestamp))
     }
 }
 

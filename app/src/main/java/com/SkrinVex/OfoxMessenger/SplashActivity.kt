@@ -246,15 +246,7 @@ fun SplashScreen() {
                         .await()
                 }
 
-                val updateActivityDeferred = async {
-                    FirebaseDatabase.getInstance()
-                        .getReference("users/$uid/lastActivity")
-                        .setValue(System.currentTimeMillis())
-                        .await()
-                }
-
                 val userSnapshot = userDataDeferred.await()
-                updateActivityDeferred.await()
 
                 userSnapshot.value as? Map<String, Any>
             } catch (e: Exception) {

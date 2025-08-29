@@ -91,7 +91,8 @@ data class ProfileCheckResponse(
     val profile_completion: Int = 0,
     val friendship_status: String? = null,
     val is_friend: Boolean = false,
-    val error: String? = null
+    val error: String? = null,
+    val isOnline: Boolean = false // Новое поле для онлайн-статуса
 ) : Serializable
 
 data class FriendsResponse(
@@ -108,7 +109,8 @@ data class Friend(
     val username: String,
     val nickname: String? = null,
     val status: String? = null,
-    val profile_photo: String? = null
+    val profile_photo: String? = null,
+    val isOnline: Boolean = false
 ) : Serializable
 
 data class NewsItem(

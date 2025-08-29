@@ -78,8 +78,9 @@ class ProfileViewModel(
 
                 val email = profileData?.get("email") as? String?
                 val isDisabled = profileData?.get("is_disabled") as? Boolean ?: false
+                val isOnline = profileData?.get("online") as? Boolean ?: false // Загружаем онлайн-статус
 
-                Log.d("ProfileViewModel", "email=$email, isDisabled=$isDisabled, friendUid=$friendUid")
+                Log.d("ProfileViewModel", "email=$email, isDisabled=$isDisabled, isOnline=$isOnline, friendUid=$friendUid")
 
                 val isViewingOwnProfile = friendUid == null
                 val userNotFoundCondition = !isViewingOwnProfile && (email.isNullOrBlank() || isDisabled)
@@ -108,7 +109,8 @@ class ProfileViewModel(
                     profile_completion = (profileData?.get("profile_completion") as? Long)?.toInt()
                         ?: calculateProfileCompletion(profileData),
                     is_friend = false,
-                    friendship_status = if (friendUid == null) "own_profile" else "none"
+                    friendship_status = if (friendUid == null) "own_profile" else "none",
+                    isOnline = isOnline // Устанавливаем онлайн-статус
                 )
 
                 val finalProfile = if (friendUid != null) {
@@ -132,6 +134,11 @@ class ProfileViewModel(
                     profileData = finalProfile,
                     isOwnProfile = friendUid == null
                 )
+
+                // Настраиваем слушатель онлайн-статуса, если это не собственный профиль
+                if (friendUid != null) {
+                    setupOnlineStatusListener(friendUid)
+                }
             } catch (e: Exception) {
                 Log.e("ProfileViewModel", "Error loading profile: ${e.message}", e)
                 _state.value = ProfileViewState(
@@ -141,6 +148,47 @@ class ProfileViewModel(
                 )
             }
         }
+    }
+
+    private var onlineStatusListener: ValueEventListener? = null
+
+    private fun setupOnlineStatusListener(userId: String) {
+        onlineStatusListener?.let {
+            FirebaseDatabase.getInstance().getReference("users/$userId/online").removeEventListener(it)
+        }
+
+        onlineStatusListener = object : ValueEventListener {
+            override fun onDataChange(snapshot: DataSnapshot) {
+                val isOnline = snapshot.getValue(Boolean::class.java) ?: false
+                Log.d("ProfileViewModel", "Online status updated for $userId: $isOnline")
+                val currentProfile = _state.value.profileData
+                if (currentProfile != null) {
+                    _state.value = _state.value.copy(
+                        profileData = currentProfile.copy(isOnline = isOnline)
+                    )
+                }
+            }
+
+            override fun onCancelled(error: DatabaseError) {
+                Log.e("ProfileViewModel", "Online status listener error: ${error.message}")
+            }
+        }
+
+        FirebaseDatabase.getInstance()
+            .getReference("users/$userId/online")
+            .addValueEventListener(onlineStatusListener!!)
+    }
+
+    override fun onCleared() {
+        friendListener?.let {
+            FirebaseDatabase.getInstance().getReference("users/$uid/friends/$friendUid").removeEventListener(it)
+        }
+        onlineStatusListener?.let {
+            friendUid?.let { uid ->
+                FirebaseDatabase.getInstance().getReference("users/$uid/online").removeEventListener(it)
+            }
+        }
+        super.onCleared()
     }
 
     fun updateProfile(updatedProfile: ProfileCheckResponse) {
@@ -384,11 +432,6 @@ class ProfileViewModel(
             profileData?.get(field)?.toString()?.isNotBlank() == true
         }
         return (filledFields * 100) / fields.size
-    }
-
-    override fun onCleared() {
-        friendListener?.let { FirebaseDatabase.getInstance().getReference("users/$uid/friends/$friendUid").removeEventListener(it) }
-        super.onCleared()
     }
 }
 
