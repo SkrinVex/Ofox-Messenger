@@ -338,8 +338,11 @@ fun ProfileHeader(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    Box {
+                    Box(
+                        modifier = Modifier.size(72.dp)
+                    ) {
                         var isProfilePhotoLoading by remember { mutableStateOf(true) }
+
                         AsyncImage(
                             model = ImageRequest.Builder(LocalContext.current)
                                 .data(if (profile.profile_photo?.isNotBlank() == true) profile.profile_photo else null)
@@ -351,35 +354,46 @@ fun ProfileHeader(
                             contentDescription = "Фото профиля",
                             imageLoader = imageLoader,
                             modifier = Modifier
-                                .size(72.dp)
+                                .fillMaxSize()
                                 .clip(CircleShape)
-                                .background(Color(0xFF333333)),
+                                .background(Color(0xFF333333))
+                                .clickable(enabled = !profile.profile_photo.isNullOrBlank()) {
+                                    profile.profile_photo?.let { url -> PhotoViewerActivity.start(context, url) }
+                                },
                             contentScale = ContentScale.Crop,
                             onState = { state ->
                                 isProfilePhotoLoading = state is AsyncImagePainter.State.Loading
                             }
                         )
+
                         if (isProfilePhotoLoading) {
-                            CircularProgressIndicator(
-                                color = Color(0xFFFF6B35),
-                                modifier = Modifier.size(24.dp),
-                                strokeWidth = 2.dp
-                            )
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize(),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                CircularProgressIndicator(
+                                    color = Color(0xFFFF6B35),
+                                    modifier = Modifier.size(24.dp),
+                                    strokeWidth = 2.dp
+                                )
+                            }
                         }
-                        // Индикатор онлайн-статуса
+
+                        // Индикатор онлайн-статуса (в правом нижнем углу)
                         if (profile.isOnline && !isOwnProfile) {
                             Box(
                                 modifier = Modifier
-                                    .size(16.dp)
                                     .align(Alignment.BottomEnd)
-                                    .offset(x = 2.dp, y = 2.dp)
-                                    .background(Color(0xFF101010), CircleShape) // Темная обводка
+                                    .offset(2.dp, 2.dp)
+                                    .size(16.dp)
+                                    .background(Color(0xFF101010), CircleShape)
                                     .padding(2.dp)
                             ) {
                                 Box(
                                     modifier = Modifier
                                         .fillMaxSize()
-                                        .background(Color(0xFF00C851), CircleShape) // Зеленый кружок
+                                        .background(Color(0xFF00C851), CircleShape)
                                 )
                             }
                         }
