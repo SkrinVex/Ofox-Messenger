@@ -43,35 +43,35 @@ class PushNotificationService : FirebaseMessagingService() {
         val data = remoteMessage.data
         val type = data["type"] ?: return
         val fromUid = data["from_uid"]
+        val chatId = data["chat_id"]
         val notificationId = data["notification_id"] ?: return
+
+        val isGroup = type == "group_message"
         val buttonText = data["button_text"]
         val buttonUrl = data["button_url"]
-        val chatId = data["chat_id"]
         val messageId = data["message_id"]
         val postId = data["post_id"]
         val commentId = data["comment_id"]
         val message = data["message"]?.trim() ?: "Новое уведомление в Ofox Messenger!"
 
-        // Mark notification as processed with current timestamp
+        // Mark notification as processed
         processedNotifications[notificationId] = System.currentTimeMillis()
 
         CoroutineScope(Dispatchers.IO).launch {
-            val profile = loadProfile(fromUid)
-            val nickname = profile?.nickname ?: "Пользователь"
-            val profilePhoto = profile?.profile_photo ?: "https://api.skrinvex.su/default_profile_photo.png"
-            val profileBitmap = loadProfilePhoto(profilePhoto)
-
-            val title = when (type) {
-                "chat_message" -> nickname
-                "mention" -> "$nickname упомянул вас"
-                "friend_request" -> "$nickname отправил заявку в друзья"
-                "friend_added" -> "$nickname добавил вас в друзья"
-                "post_mention" -> "$nickname упомянул вас в посте"
-                "comment_mention" -> "$nickname упомянул вас в комментарии"
-                else -> "Новое уведомление"
+            val (title, content, photoUrl) = if (isGroup) {
+                val groupName = data["group_name"] ?: "Групповой чат"
+                val groupPhotoUrl = data["group_photo"] ?: "https://api.skrinvex.su/default_group_photo.png"
+                val senderName = data["sender_name"] ?: "Участник"
+                Triple(groupName, "$senderName: $message", groupPhotoUrl)
+            } else {
+                val profile = loadProfile(fromUid)
+                val nickname = profile?.nickname ?: "Пользователь"
+                val photo = profile?.profile_photo ?: "https://api.skrinvex.su/default_profile_photo.png"
+                Triple(nickname, message, photo)
             }
 
-            // For chat messages, check for additional unread messages
+            val profileBitmap = loadProfilePhoto(photoUrl)
+
             val unreadMessages = if (type == "chat_message" && chatId != null) {
                 getUnreadMessages(chatId, fromUid)
             } else {
@@ -92,7 +92,10 @@ class PushNotificationService : FirebaseMessagingService() {
                     commentId = commentId,
                     buttonText = buttonText,
                     buttonUrl = buttonUrl,
-                    unreadMessages = unreadMessages
+                    unreadMessages = unreadMessages,
+                    groupName = if (isGroup) data["group_name"] else null,
+                    groupPhoto = if (isGroup) data["group_photo"] else null,
+                    profilePhotoUrl = photoUrl
                 )
             }
         }
@@ -291,10 +294,16 @@ class PushNotificationService : FirebaseMessagingService() {
         commentId: String? = null,
         buttonText: String? = null,
         buttonUrl: String? = null,
-        unreadMessages: List<Message> = emptyList()
+        profilePhotoUrl: String? = null,
+        unreadMessages: List<Message> = emptyList(),
+        groupName: String? = null,
+        groupPhoto: String? = null
     ) {
         val channelId = "ofox_messenger_notifications"
-        val notificationIdInt = notificationId?.hashCode() ?: UUID.randomUUID().hashCode()
+        val notificationIdInt = when (type) {
+            "group_message" -> chatId?.hashCode() ?: notificationId?.hashCode() ?: UUID.randomUUID().hashCode()
+            else -> notificationId?.hashCode() ?: UUID.randomUUID().hashCode()
+        }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
@@ -312,6 +321,14 @@ class PushNotificationService : FirebaseMessagingService() {
         val intent = when (type) {
             "chat_message" -> Intent(this, ChatActivity::class.java).apply {
                 putExtra("friend_uid", fromUid)
+                putExtra("friend_name", title)
+                putExtra("friend_photo", profilePhotoUrl ?: "")
+                putExtra("notificationId", notificationId)
+            }
+            "group_message" -> Intent(this, GroupChatActivity::class.java).apply {
+                putExtra("group_id", chatId)
+                putExtra("group_name", groupName ?: title)
+                putExtra("group_photo", groupPhoto)
                 putExtra("notificationId", notificationId)
             }
             "post_mention", "comment_mention" -> Intent(this, PostsActivity::class.java).apply {
@@ -346,19 +363,27 @@ class PushNotificationService : FirebaseMessagingService() {
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setAutoCancel(true)
             .setContentIntent(pendingIntent)
-            .setGroup("chat_$chatId")
+            .setGroup(
+                if (type == "group_message") "group_$chatId" else "chat_$chatId"
+            )
+
+        if (type == "group_message") {
+            builder.setContentTitle(title) // вместо nickname
+            builder.setContentText("У вас новые сообщения в группе")
+        }
 
         profilePhotoBitmap?.let { builder.setLargeIcon(it) }
 
         // Add action buttons for chat_message
-        if (type == "chat_message") {
-            // Mark as Read action
+        if (type == "chat_message") { // <-- убрали group_message отсюда
+            // MARK AS READ
             val markReadIntent = Intent(this, NotificationActionReceiver::class.java).apply {
                 action = "MARK_AS_READ"
                 putExtra("chat_id", chatId)
                 putExtra("message_id", messageId)
                 putExtra("notification_id", notificationId)
                 putExtra("notification_id_int", notificationIdInt)
+                putExtra("is_group", false) // всегда false для личных чатов
             }
             val markReadPending = PendingIntent.getBroadcast(
                 this,
@@ -368,7 +393,7 @@ class PushNotificationService : FirebaseMessagingService() {
             )
             builder.addAction(R.drawable.ic_check, "Прочитано", markReadPending)
 
-            // Reply action
+            // Reply action (только для обычных чатов)
             val replyLabel = "Введите ответ"
             val remoteInput = RemoteInput.Builder("key_text_reply")
                 .setLabel(replyLabel)
@@ -376,10 +401,11 @@ class PushNotificationService : FirebaseMessagingService() {
 
             val replyIntent = Intent(this, NotificationActionReceiver::class.java).apply {
                 action = "REPLY"
-                putExtra("friend_uid", fromUid)
                 putExtra("notification_id", notificationId)
                 putExtra("notification_id_int", notificationIdInt)
+                putExtra("friend_uid", fromUid) // только личные чаты
             }
+
             val replyPendingIntent = PendingIntent.getBroadcast(
                 this,
                 notificationIdInt + 2,

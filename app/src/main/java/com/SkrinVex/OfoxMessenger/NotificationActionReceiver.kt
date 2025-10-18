@@ -22,6 +22,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
         val currentUserId = FirebaseAuth.getInstance().currentUser?.uid ?: return
         val notificationId = intent.getStringExtra("notification_id")
         val notificationIdInt = intent.getIntExtra("notification_id_int", 0)
+        val isGroup = intent.getBooleanExtra("is_group", false)
 
         if (action == "MARK_AS_READ") {
             val chatId = intent.getStringExtra("chat_id")
@@ -30,9 +31,13 @@ class NotificationActionReceiver : BroadcastReceiver() {
             if (chatId != null && messageId != null) {
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
-                        // Mark message as read
+                        val ref = if (isGroup) {
+                            "group_chats/$chatId/messages/$messageId/status"
+                        } else {
+                            "chats/$chatId/messages/$messageId/status"
+                        }
                         FirebaseDatabase.getInstance()
-                            .getReference("chats/$chatId/messages/$messageId/status")
+                            .getReference(ref)
                             .setValue("read")
                             .await()
 
@@ -54,7 +59,10 @@ class NotificationActionReceiver : BroadcastReceiver() {
             }
         } else if (action == "REPLY") {
             val friendUid = intent.getStringExtra("friend_uid")
-            val replyText = RemoteInput.getResultsFromIntent(intent)?.getCharSequence("key_text_reply")?.toString()?.trim()
+            val replyText = RemoteInput.getResultsFromIntent(intent)
+                ?.getCharSequence("key_text_reply")
+                ?.toString()
+                ?.trim()
 
             if (replyText != null && friendUid != null) {
                 val chatId = if (currentUserId < friendUid) "${currentUserId}_${friendUid}" else "${friendUid}_${currentUserId}"
@@ -70,11 +78,21 @@ class NotificationActionReceiver : BroadcastReceiver() {
 
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
-                        // Save reply message
-                        FirebaseDatabase.getInstance()
-                            .getReference("chats/$chatId/messages/$messageId")
-                            .setValue(message)
-                            .await()
+                        if (isGroup) {
+                            val groupId = intent.getStringExtra("group_id") ?: return@launch
+                            FirebaseDatabase.getInstance()
+                                .getReference("group_chats/$groupId/messages/$messageId")
+                                .setValue(message)
+                                .await()
+                        } else {
+                            val friendUid = intent.getStringExtra("friend_uid") ?: return@launch
+                            val chatId = if (currentUserId < friendUid)
+                                "${currentUserId}_${friendUid}" else "${friendUid}_${currentUserId}"
+                            FirebaseDatabase.getInstance()
+                                .getReference("chats/$chatId/messages/$messageId")
+                                .setValue(message)
+                                .await()
+                        }
 
                         // Update status to delivered
                         FirebaseDatabase.getInstance()

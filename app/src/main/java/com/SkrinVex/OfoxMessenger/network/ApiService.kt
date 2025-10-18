@@ -49,6 +49,19 @@ interface ApiService {
         @Field("button_url") buttonUrl: String? = null
     ): Response<GenericResponse>
 
+    @FormUrlEncoded
+    @POST("send_notification.php")
+    suspend fun sendGroupNotification(
+        @Field("type") type: String,
+        @Field("from_uid") fromUid: String,
+        @Field("to_uid") toUid: String,
+        @Field("message") message: String,
+        @Field("chat_id") chatId: String,
+        @Field("message_id") messageId: String,
+        @Field("group_name") groupName: String,
+        @Field("group_photo") groupPhoto: String? = null
+    ): Response<GenericResponse>
+
     companion object {
         private const val BASE_URL = "https://api.skrinvex.su/"
 

@@ -46,6 +46,8 @@ import android.os.Build
 import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.platform.LocalUriHandler
 import com.SkrinVex.OfoxMessenger.ui.theme.OfoxMessengerTheme
 import com.google.firebase.auth.FirebaseAuth
@@ -67,6 +69,11 @@ import java.net.URLEncoder
 import java.security.MessageDigest
 import kotlin.system.exitProcess
 
+data class UpdateInfo(
+    val version: String,
+    val build: Int,
+    val changelog: List<String>
+)
 class SplashActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -97,6 +104,8 @@ fun SplashScreen() {
     var showCorruptedDataDialog by remember { mutableStateOf(false) }
     var tapCount by remember { mutableStateOf(0) }
     var lastTapTime by remember { mutableStateOf(0L) }
+
+    var updateInfo by remember { mutableStateOf<UpdateInfo?>(null) }
 
     // Упрощенные анимации для быстродействия
     val infiniteTransition = rememberInfiniteTransition(label = "splash_animation")
@@ -163,15 +172,15 @@ fun SplashScreen() {
     }
 
     // МАКСИМАЛЬНО БЫСТРАЯ функция проверки версии
-    suspend fun fetchRemoteAppConfig(): Pair<String, Int>? = withContext(Dispatchers.IO) {
+    suspend fun fetchRemoteAppConfig(): UpdateInfo? = withContext(Dispatchers.IO) {
         try {
             val url = URL("https://api.skrinvex.su/ofox.php")
             val conn = url.openConnection() as HttpURLConnection
 
             conn.apply {
                 setRequestProperty("User-Agent", "OfoxChecker")
-                connectTimeout = 2000  // Еще быстрее
-                readTimeout = 2000     // Еще быстрее
+                connectTimeout = 2000
+                readTimeout = 2000
                 requestMethod = "GET"
                 doInput = true
                 useCaches = false
@@ -187,9 +196,16 @@ fun SplashScreen() {
             conn.disconnect()
 
             val json = JSONObject(response)
-            Pair(json.getString("version"), json.getInt("build"))
+            val changelog = json.getJSONArray("changelog").let { array ->
+                List(array.length()) { array.getString(it) }
+            }
+            UpdateInfo(
+                version = json.getString("version"),
+                build = json.getInt("build"),
+                changelog = changelog
+            )
         } catch (e: Exception) {
-            null // Просто возвращаем null без логирования для скорости
+            null
         }
     }
 
@@ -266,8 +282,8 @@ fun SplashScreen() {
                     @Suppress("DEPRECATION") packageInfo.versionCode
                 }
 
-                val (remoteVersion, remoteBuild) = remote
-                if (remoteVersion != localVersion || remoteBuild > localBuild) {
+                if (remote.version != localVersion || remote.build > localBuild) {
+                    updateInfo = remote
                     showForceUpdateDialog = true
                     return@LaunchedEffect
                 }
@@ -662,8 +678,15 @@ fun SplashScreen() {
     }
 
     // Диалог о необходимости обновления приложения
-    if (showForceUpdateDialog) {
+    if (showForceUpdateDialog && updateInfo != null) {
         val uriHandler = LocalUriHandler.current
+        val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+        val localVersion = packageInfo.versionName ?: "unknown"
+        val localBuild = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            packageInfo.longVersionCode.toInt()
+        } else {
+            @Suppress("DEPRECATION") packageInfo.versionCode
+        }
 
         AlertDialog(
             onDismissRequest = {},
@@ -681,7 +704,7 @@ fun SplashScreen() {
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Text(
-                        text = "Скачать новую версию",
+                        text = "Обновить приложение",
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
                         fontSize = 16.sp
@@ -718,12 +741,85 @@ fun SplashScreen() {
                 }
             },
             text = {
-                Text(
-                    text = "Вы используете устаревшую или неподдерживаемую версию приложения. Пожалуйста, скачайте последнюю версию.",
-                    color = Color.White.copy(alpha = 0.9f),
-                    fontSize = 16.sp,
-                    lineHeight = 24.sp
-                )
+                Column(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalArrangement = Arrangement.spacedBy(16.dp)
+                ) {
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color(0xFF2A2A2A)
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Ваша версия: $localVersion (Сборка $localBuild)",
+                                color = Color.White,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Новая версия: ${updateInfo!!.version} (Сборка ${updateInfo!!.build})",
+                                color = Color(0xFFFF6B35),
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                    Text(
+                        text = "Ваша версия приложения устарела. Пожалуйста, обновите приложение до последней версии. Ниже вы можете ознакомиться со списком изменений.",
+                        color = Color.White.copy(alpha = 0.9f),
+                        fontSize = 16.sp,
+                        lineHeight = 24.sp
+                    )
+                    Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = CardDefaults.cardColors(
+                            containerColor = Color(0xFF2A2A2A)
+                        ),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(max = 200.dp)
+                                .verticalScroll(rememberScrollState())
+                                .padding(16.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Список изменений:",
+                                color = Color.White,
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                            updateInfo!!.changelog.forEach { change ->
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Text(
+                                        text = "•",
+                                        color = Color(0xFFFF6B35),
+                                        fontSize = 16.sp
+                                    )
+                                    Text(
+                                        text = change,
+                                        color = Color.White.copy(alpha = 0.9f),
+                                        fontSize = 14.sp,
+                                        lineHeight = 20.sp
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
             },
             containerColor = Color(0xFF1A1A1A),
             shape = RoundedCornerShape(20.dp),

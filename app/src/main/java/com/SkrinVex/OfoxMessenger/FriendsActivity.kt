@@ -33,6 +33,7 @@ import androidx.lifecycle.ViewModelProvider
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.SkrinVex.OfoxMessenger.network.Friend
+import com.SkrinVex.OfoxMessenger.ui.common.MorphLoadingIndicator
 import com.SkrinVex.OfoxMessenger.ui.common.enableInternetCheck
 import com.SkrinVex.OfoxMessenger.ui.theme.OfoxMessengerTheme
 import com.SkrinVex.OfoxMessenger.utils.SmartLinkText
@@ -137,7 +138,7 @@ fun FriendsScreen(
             when {
                 state.isLoading && state.friends.isEmpty() && state.users.isEmpty() -> {
                     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                        CircularProgressIndicator(color = Color(0xFFFF6B35))
+                        MorphLoadingIndicator(modifier = Modifier.size(72.dp))
                     }
                 }
 
@@ -198,7 +199,7 @@ fun FriendsScreen(
                                         modifier = Modifier.fillMaxWidth(),
                                         contentAlignment = Alignment.Center
                                     ) {
-                                        CircularProgressIndicator(color = Color(0xFFFF6B35))
+                                        MorphLoadingIndicator(modifier = Modifier.size(72.dp))
                                     }
                                 }
                             }

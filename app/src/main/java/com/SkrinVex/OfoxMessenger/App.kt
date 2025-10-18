@@ -65,6 +65,8 @@ class App : Application(), Application.ActivityLifecycleCallbacks {
             db.getReference("posts").keepSynced(true)
             db.getReference("chats").keepSynced(true)
             db.getReference("news").keepSynced(true)
+            db.getReference("group_chats").keepSynced(true)
+            db.getReference("user_groups").keepSynced(true)
         } catch (e: DatabaseException) {
             // если кто-то обратился раньше — игнорируем
         }

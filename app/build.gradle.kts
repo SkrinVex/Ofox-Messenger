@@ -12,7 +12,7 @@ android {
 
     defaultConfig {
         applicationId = "com.SkrinVex.OfoxMessenger"
-        minSdk = 24
+        minSdk = 25
         targetSdk = 36
         versionCode = 81
         versionName = "1.3"
@@ -54,6 +54,7 @@ dependencies {
     implementation(libs.androidx.material3)
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.foundation)
+    implementation(libs.androidx.compose.material3)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
@@ -73,7 +74,7 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("io.coil-kt:coil-svg:2.7.0")
     implementation("androidx.compose.animation:animation:1.8.3")
-    implementation("androidx.compose.material3:material3:1.3.2")
+    implementation("androidx.compose.material3:material3:1.5.0-alpha04")
 
     implementation(platform("com.google.firebase:firebase-bom:32.7.3"))
     implementation("com.google.firebase:firebase-database-ktx")

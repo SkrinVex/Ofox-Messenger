@@ -208,7 +208,11 @@ fun MainScreen(
                 item {
                     val actions = listOf(
                         ActionItem("Профиль", Icons.Rounded.Person) { onNavigateToProfileView() },
-                        ActionItem("Сообщения", Icons.Rounded.Chat) { DialogController.showComingSoonDialog() },
+                        ActionItem("Сообщения", Icons.Rounded.Chat) {
+                            val intent = Intent(context, ChatsActivity::class.java)
+                            intent.putExtra("uid", uid)
+                            context.startActivity(intent)
+                        },
                         ActionItem("Друзья", Icons.Rounded.People) {
                             val intent = Intent(context, FriendsActivity::class.java)
                             intent.putExtra("uid", uid)

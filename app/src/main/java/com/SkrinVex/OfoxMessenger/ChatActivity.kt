@@ -5,6 +5,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -24,6 +25,7 @@ import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
@@ -48,6 +50,8 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -72,7 +76,6 @@ class ChatActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableInternetCheck()
 
-        // Настройка для правильного поведения с клавиатурой
         WindowCompat.setDecorFitsSystemWindows(window, false)
         window.statusBarColor = Color(0xFF0A0A0A).toArgb()
         window.navigationBarColor = Color.Transparent.toArgb()
@@ -80,20 +83,35 @@ class ChatActivity : ComponentActivity() {
         val friendUid = intent.getStringExtra("friend_uid") ?: return finish()
         val friendName = intent.getStringExtra("friend_name") ?: "Пользователь"
         val friendPhoto = intent.getStringExtra("friend_photo")
+        val currentUser = FirebaseAuth.getInstance().currentUser
+
+        if (currentUser == null) {
+            Log.e("ChatActivity", "Пользователь не аутентифицирован, завершение активности")
+            Toast.makeText(this, "Требуется вход в аккаунт", Toast.LENGTH_SHORT).show()
+            finish()
+            return
+        }
 
         val viewModel: ChatViewModel by viewModels {
-            ChatViewModelFactory(FirebaseAuth.getInstance().currentUser?.uid ?: "", friendUid)
+            ChatViewModelFactory(currentUser.uid, friendUid)
         }
 
         viewModel.startFriendStatusListener()
+        viewModel.loadInitialMessages()
 
         setContent {
             OfoxMessengerTheme {
-                ChatScreen(
+                BaseChatScreen(
                     viewModel = viewModel,
-                    friendName = friendName,
-                    friendPhoto = friendPhoto,
-                    onBack = { finish() }
+                    onBack = { finish() },
+                    header = {
+                        ChatTopBar(
+                            friendName = friendName,
+                            friendPhoto = friendPhoto,
+                            status = viewModel.friendStatus.collectAsState().value,
+                            onBack = { finish() }
+                        )
+                    }
                 )
             }
         }
@@ -104,32 +122,28 @@ class ChatActivity : ComponentActivity() {
         val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
         val friendUid = intent.getStringExtra("friend_uid") ?: return
 
-        // Помечаем что мы в чате именно с этим пользователем
-        FirebaseDatabase.getInstance()
-            .getReference("users/$uid/in_chat_with")
-            .setValue(friendUid)
+        val viewModel: ChatViewModel by viewModels()
+        viewModel.setInChat(friendUid)
     }
 
     override fun onPause() {
         super.onPause()
-        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
-
-        val ref = FirebaseDatabase.getInstance().getReference("users/$uid")
-        ref.child("in_chat_with").setValue(null)
-        ref.child("typing").setValue(false) // сброс "печатает"
+        val viewModel: ChatViewModel by viewModels()
+        viewModel.setInChat(null)
+        viewModel.clearTyping()
     }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ChatScreen(
-    viewModel: ChatViewModel,
-    friendName: String,
-    friendPhoto: String?,
-    onBack: () -> Unit
+fun BaseChatScreen(
+    viewModel: BaseChatViewModel,
+    onBack: () -> Unit,
+    header: @Composable () -> Unit
 ) {
     val context = LocalContext.current
     val systemUiController = rememberSystemUiController()
+    val currentUserId = FirebaseAuth.getInstance().currentUser?.uid
 
     SideEffect {
         systemUiController.setSystemBarsColor(
@@ -150,13 +164,10 @@ fun ChatScreen(
     val scope = rememberCoroutineScope()
     var selectedMessage by remember { mutableStateOf<Message?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
-    val friendStatus by viewModel.friendStatus.collectAsState()
 
-    // Сохраняем позицию скролла при загрузке новых сообщений
     var savedScrollPosition by remember { mutableStateOf<Int?>(null) }
     var savedScrollOffset by remember { mutableStateOf(0) }
 
-    // Track if user is at the bottom (within 3 messages from the end)
     val isAtBottom by remember {
         derivedStateOf {
             val layoutInfo = lazyListState.layoutInfo
@@ -169,59 +180,64 @@ fun ChatScreen(
         }
     }
 
-    // Проверяем загрузку дополнительных сообщений
     LaunchedEffect(lazyListState.firstVisibleItemIndex, lazyListState.firstVisibleItemScrollOffset) {
         if (lazyListState.firstVisibleItemIndex == 0 &&
             lazyListState.firstVisibleItemScrollOffset == 0 &&
             state.canLoadMore &&
             !state.isLoadingMore
         ) {
-            // Сохраняем текущую позицию перед загрузкой
-            val currentFirstVisible = lazyListState.firstVisibleItemIndex
-            val currentOffset = lazyListState.firstVisibleItemScrollOffset
-
-            savedScrollPosition = currentFirstVisible
-            savedScrollOffset = currentOffset
+            savedScrollPosition = lazyListState.firstVisibleItemIndex
+            savedScrollOffset = lazyListState.firstVisibleItemScrollOffset
 
             viewModel.loadMoreMessages()
         }
     }
 
-    // Восстанавливаем позицию скролла после загрузки новых сообщений
-    LaunchedEffect(state.messages.size, state.isLoadingMore) {
-        if (!state.isLoadingMore && savedScrollPosition != null) {
-            // Вычисляем новую позицию с учетом добавленных сообщений
-            val previousMessageCount = state.messages.size - (savedScrollPosition!! + 1)
-            val newPosition = state.messages.size - previousMessageCount - 1
-
-            if (newPosition >= 0) {
-                lazyListState.scrollToItem(newPosition, savedScrollOffset)
-            }
-
-            savedScrollPosition = null
-            savedScrollOffset = 0
-        }
-    }
-
-    // Автоскролл только для собственных новых сообщений
-    LaunchedEffect(state.messages.size) {
-        if (state.messages.isNotEmpty() && !state.isLoadingMore) {
-            val lastMessage = state.messages.last()
-            // Скроллим вниз только если это наше сообщение ИЛИ мы уже внизу
-            if (lastMessage.senderId == FirebaseAuth.getInstance().currentUser?.uid || isAtBottom) {
-                scope.launch {
-                    lazyListState.animateScrollToItem(state.messages.size - 1)
-                }
-            }
-        }
-    }
-
-    // Группировка сообщений по датам
     val dateFormatter = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()) }
     val displayDateFormatter = remember { SimpleDateFormat("dd MMMM yyyy", Locale.getDefault()) }
     val groupedMessages = remember(state.messages) {
         state.messages.groupBy { message ->
             dateFormatter.format(Date(message.timestamp))
+        }
+    }
+
+    var oldMessagesSize by remember { mutableStateOf(0) }
+    var oldGroupedSize by remember { mutableStateOf(0) }
+
+    // Автоскролл только если новое сообщение и юзер внизу
+    LaunchedEffect(state.messages) {
+        if (state.messages.isNotEmpty() && !state.isLoadingMore) {
+            val lastMessage = state.messages.last()
+            val isOwn = lastMessage.senderId == currentUserId
+            if (isOwn || isAtBottom) {
+                scope.launch {
+                    lazyListState.animateScrollToItem(groupedMessages.size + state.messages.size - 1)
+                }
+            }
+        }
+    }
+
+    // Прокрутка вниз после первой загрузки (без анимации)
+    LaunchedEffect(state.isLoading) {
+        if (!state.isLoading && state.messages.isNotEmpty()) {
+            lazyListState.scrollToItem(groupedMessages.size + state.messages.size - 1)
+        }
+    }
+
+    LaunchedEffect(state.isLoadingMore) {
+        if (!state.isLoadingMore && savedScrollPosition != null) {
+            // После load more: новые items добавлены в начало, так что старый first index сдвинут на num_added_items
+            // num_added_items = (new_messages_added + new_groups_added) — посчитайте в viewModel после load
+            // Предположим, viewModel возвращает num_added (или вычислите diff: old_size = state.messages.size before load)
+            val oldMessagesSize = state.messages.size // Но нужно запомнить before load; добавьте var oldSize before viewModel.loadMoreMessages()
+            // После load:
+            val addedMessages = state.messages.size - oldMessagesSize
+            val addedGroups = groupedMessages.size - oldGroupedSize // Аналогично запомните oldGroupedSize
+            val addedItems = addedMessages + addedGroups
+
+            val newPosition = savedScrollPosition!! + addedItems
+            lazyListState.scrollToItem(newPosition, savedScrollOffset)
+            savedScrollPosition = null // Сброс
         }
     }
 
@@ -242,15 +258,8 @@ fun ChatScreen(
         Column(
             modifier = Modifier.fillMaxSize()
         ) {
-            // Фиксированный ToolBar
-            ChatTopBar(
-                friendName = friendName,
-                friendPhoto = friendPhoto,
-                status = friendStatus,
-                onBack = onBack
-            )
+            header()
 
-            // Контент чата
             Box(
                 modifier = Modifier
                     .weight(1f)
@@ -258,7 +267,6 @@ fun ChatScreen(
             ) {
                 when {
                     state.isLoading -> {
-                        // Показываем крутилку только при первичной загрузке
                         Box(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center
@@ -289,16 +297,50 @@ fun ChatScreen(
                                         )
                                     }
                                     items(messages) { message ->
+                                        val messageIndex = messages.indexOf(message)
+                                        val isOwn = message.senderId == FirebaseAuth.getInstance().currentUser?.uid
+
+                                        // Определяем, нужно ли показывать аватарку
+                                        val showAvatar = if (!isOwn && viewModel is GroupChatViewModel) {
+                                            // Показываем аватарку если:
+                                            // 1. Это последнее сообщение в списке ИЛИ
+                                            // 2. Следующее сообщение от другого пользователя
+                                            messageIndex == messages.size - 1 ||
+                                                    messages.getOrNull(messageIndex + 1)?.senderId != message.senderId
+                                        } else false
+
+                                        // Определяем, нужно ли показывать имя отправителя
+                                        val showSenderName = if (!isOwn && viewModel is GroupChatViewModel) {
+                                            // Показываем имя если:
+                                            // 1. Это первое сообщение в списке ИЛИ
+                                            // 2. Предыдущее сообщение от другого пользователя
+                                            messageIndex == 0 ||
+                                                    messages.getOrNull(messageIndex - 1)?.senderId != message.senderId
+                                        } else false
+
+                                        var senderName: String? = null
+                                        var senderPhoto: String? = null
+
+                                        if (!isOwn && viewModel is GroupChatViewModel) {
+                                            senderName = viewModel.getMemberName(message.senderId)
+                                            senderPhoto = viewModel.getMemberPhoto(message.senderId)
+                                        }
+
                                         MessageCard(
                                             message = message,
-                                            isOwnMessage = message.senderId == FirebaseAuth.getInstance().currentUser?.uid,
+                                            isOwnMessage = isOwn,
+                                            senderName = senderName,
+                                            senderPhoto = senderPhoto,
+                                            isGroupChat = viewModel is GroupChatViewModel,
+                                            currentUserId = currentUserId ?: "",
+                                            showAvatar = showAvatar,
+                                            showSenderName = showSenderName,
                                             onLongClick = { selectedMessage = message }
                                         )
                                     }
                                 }
                             }
 
-                            // Индикатор загрузки сверху
                             androidx.compose.animation.AnimatedVisibility(
                                 visible = state.isLoadingMore,
                                 enter = fadeIn(animationSpec = tween(200)) + scaleIn(initialScale = 0.8f),
@@ -336,7 +378,6 @@ fun ChatScreen(
                     }
                 }
 
-                // Scroll to bottom button
                 androidx.compose.animation.AnimatedVisibility(
                     visible = !isAtBottom,
                     enter = fadeIn(animationSpec = tween(200)) + scaleIn(initialScale = 0.8f, animationSpec = tween(200)),
@@ -349,7 +390,7 @@ fun ChatScreen(
                         onClick = {
                             scope.launch {
                                 if (state.messages.isNotEmpty()) {
-                                    lazyListState.animateScrollToItem(state.messages.size - 1)
+                                    lazyListState.animateScrollToItem(groupedMessages.size + state.messages.size - 1)
                                 }
                             }
                         },
@@ -369,7 +410,6 @@ fun ChatScreen(
                 }
             }
 
-            // Поле ввода с отступами
             MessageInputField(
                 messageText = state.messageText,
                 onMessageChange = viewModel::updateMessageText,
@@ -382,7 +422,6 @@ fun ChatScreen(
             )
         }
 
-        // Bottom sheet для действий с сообщениями
         if (selectedMessage != null) {
             ModalBottomSheet(
                 onDismissRequest = { selectedMessage = null },
@@ -423,7 +462,6 @@ fun ChatScreen(
             }
         }
 
-        // Диалог подтверждения удаления
         if (showDeleteDialog && selectedMessage != null) {
             DeleteConfirmationDialog(
                 itemType = "сообщение",
@@ -473,91 +511,150 @@ fun DateHeader(date: String) {
 fun MessageCard(
     message: Message,
     isOwnMessage: Boolean,
-    onLongClick: () -> Unit
+    senderName: String? = null,
+    senderPhoto: String? = null,
+    isGroupChat: Boolean = false,
+    currentUserId: String,
+    showAvatar: Boolean = false, // Новый параметр
+    showSenderName: Boolean = false, // Новый параметр
+    onLongClick: () -> Unit,
+    onAvatarClick: (() -> Unit)? = null
 ) {
     val alignment = if (isOwnMessage) Alignment.CenterEnd else Alignment.CenterStart
     val backgroundColor = if (isOwnMessage) Color(0xFFFF6B35) else Color(0xFF2A2A2A)
     val textColor = if (isOwnMessage) Color.Black else Color.White
     val formatter = SimpleDateFormat("HH:mm", Locale.getDefault())
+    val context = LocalContext.current
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 4.dp),
+            .padding(horizontal = 4.dp, vertical = 2.dp),
         contentAlignment = alignment
     ) {
-        Card(
-            modifier = Modifier
-                .widthIn(max = 280.dp)
-                .combinedClickable(
-                    interactionSource = remember { MutableInteractionSource() },
-                    indication = null,
-                    onClick = { },
-                    onLongClick = onLongClick
-                )
-                .shadow(
-                    elevation = 4.dp,
-                    shape = RoundedCornerShape(
-                        topStart = 16.dp,
-                        topEnd = 16.dp,
-                        bottomStart = if (isOwnMessage) 16.dp else 4.dp,
-                        bottomEnd = if (isOwnMessage) 4.dp else 16.dp
-                    )
-                ),
-            shape = RoundedCornerShape(
-                topStart = 16.dp,
-                topEnd = 16.dp,
-                bottomStart = if (isOwnMessage) 16.dp else 4.dp,
-                bottomEnd = if (isOwnMessage) 4.dp else 16.dp
-            ),
-            colors = CardDefaults.cardColors(containerColor = Color.Transparent)
+        Row(
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.Start,
+            modifier = Modifier.wrapContentWidth()
         ) {
-            Box(
-                modifier = Modifier
-                    .background(backgroundColor)
-            ) {
-                Column(
-                    modifier = Modifier.padding(12.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                ) {
-                    SmartLinkText(
-                        text = message.content,
-                        color = textColor,
-                        fontSize = 15.sp,
-                        lineHeight = 20.sp
+            // Аватар для чужих сообщений (только если showAvatar == true)
+            if (!isOwnMessage && isGroupChat) {
+                if (showAvatar) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(context)
+                            .data(senderPhoto?.takeIf { it.isNotBlank() })
+                            .placeholder(R.drawable.logo)
+                            .error(R.drawable.logo)
+                            .build(),
+                        contentDescription = "Аватар",
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFF333333))
+                            .clickable(
+                                interactionSource = remember { MutableInteractionSource() },
+                                indication = null
+                            ) {
+                                message.senderId?.let { userId ->
+                                    val intent = Intent(context, ProfileViewActivity::class.java).apply {
+                                        putExtra("uid", currentUserId)
+                                        if (userId != currentUserId) {
+                                            putExtra("friend_uid", userId)
+                                            putExtra("notificationId", null as String?)
+                                        }
+                                    }
+                                    context.startActivity(intent)
+                                }
+                            },
+                        contentScale = ContentScale.Crop
                     )
+                } else {
+                    // Пустое место вместо аватарки для промежуточных сообщений
+                    Spacer(modifier = Modifier.width(42.dp))
+                }
+                Spacer(modifier = Modifier.width(8.dp))
+            }
 
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+            Card(
+                modifier = Modifier
+                    .widthIn(max = 280.dp)
+                    .combinedClickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = {},
+                        onLongClick = onLongClick
+                    )
+                    .shadow(
+                        elevation = 4.dp,
+                        shape = RoundedCornerShape(
+                            topStart = 16.dp,
+                            topEnd = 16.dp,
+                            bottomStart = if (isOwnMessage) 16.dp else 4.dp,
+                            bottomEnd = if (isOwnMessage) 4.dp else 16.dp
+                        )
+                    ),
+                shape = RoundedCornerShape(
+                    topStart = 16.dp,
+                    topEnd = 16.dp,
+                    bottomStart = if (isOwnMessage) 16.dp else 4.dp,
+                    bottomEnd = if (isOwnMessage) 4.dp else 16.dp
+                ),
+                colors = CardDefaults.cardColors(containerColor = Color.Transparent)
+            ) {
+                Box(modifier = Modifier.background(backgroundColor)) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
                     ) {
-                        if (isOwnMessage) {
+                        // Никнейм только для чужих сообщений в группах И только если showSenderName == true
+                        if (!isOwnMessage && isGroupChat && showSenderName) {
                             Text(
-                                text = when (message.status) {
-                                    "sent" -> "•"
-                                    "delivered" -> "••"
-                                    "read" -> "✓✓"
-                                    else -> ""
-                                },
-                                color = textColor.copy(alpha = 0.7f),
-                                fontSize = 12.sp,
-                                fontWeight = FontWeight.Bold
+                                text = senderName ?: "Пользователь",
+                                color = Color.White.copy(alpha = 0.9f),
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold,
+                                modifier = Modifier.padding(bottom = 2.dp)
                             )
                         }
 
-                        Text(
-                            text = formatter.format(Date(message.timestamp)),
-                            color = textColor.copy(alpha = 0.7f),
-                            fontSize = 11.sp
+                        SmartLinkText(
+                            text = message.content,
+                            color = textColor,
+                            fontSize = 15.sp,
+                            lineHeight = 20.sp
                         )
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            if (isOwnMessage) {
+                                Text(
+                                    text = when (message.status) {
+                                        "sent" -> "•"
+                                        "delivered" -> "••"
+                                        "read" -> "✓"
+                                        else -> ""
+                                    },
+                                    color = textColor.copy(alpha = 0.7f),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+
+                            Text(
+                                text = formatter.format(Date(message.timestamp)),
+                                color = textColor.copy(alpha = 0.7f),
+                                fontSize = 11.sp
+                            )
+                        }
                     }
                 }
             }
         }
     }
 }
-
 @Composable
 fun EmptyChatPlaceholder() {
     Box(
