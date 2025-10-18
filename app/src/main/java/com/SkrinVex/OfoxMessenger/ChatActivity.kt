@@ -60,6 +60,7 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.SkrinVex.OfoxMessenger.ui.common.MorphLoadingIndicator
 import com.SkrinVex.OfoxMessenger.ui.common.enableInternetCheck
 import com.SkrinVex.OfoxMessenger.ui.theme.OfoxMessengerTheme
 import com.SkrinVex.OfoxMessenger.utils.SmartLinkText
@@ -271,8 +272,7 @@ fun BaseChatScreen(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center
                         ) {
-                            CircularProgressIndicator(color = Color(0xFFFF6B35))
-                        }
+                            MorphLoadingIndicator()                        }
                     }
                     state.messages.isEmpty() -> {
                         EmptyChatPlaceholder()
@@ -361,11 +361,7 @@ fun BaseChatScreen(
                                         verticalAlignment = Alignment.CenterVertically,
                                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                                     ) {
-                                        CircularProgressIndicator(
-                                            modifier = Modifier.size(16.dp),
-                                            color = Color(0xFFFF6B35),
-                                            strokeWidth = 2.dp
-                                        )
+                                        MorphLoadingIndicator()
                                         Text(
                                             text = "Загружаем сообщения...",
                                             color = Color.White,
@@ -1032,11 +1028,7 @@ fun MessageInputField(
                     enter = scaleIn(animationSpec = tween(200)) + fadeIn(),
                     exit = scaleOut(animationSpec = tween(200)) + fadeOut()
                 ) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(24.dp),
-                        color = Color(0xFFFF6B35),
-                        strokeWidth = 2.dp
-                    )
+                    MorphLoadingIndicator()
                 }
             }
         }

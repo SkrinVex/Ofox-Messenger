@@ -30,6 +30,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.SkrinVex.OfoxMessenger.ui.common.MorphLoadingIndicator
 import com.SkrinVex.OfoxMessenger.ui.theme.OfoxMessengerTheme
 import com.google.firebase.auth.FirebaseAuth
 
@@ -206,10 +207,7 @@ fun LoginScreen(
                 shape = RoundedCornerShape(16.dp)
             ) {
                 if (state.isLoading) {
-                    CircularProgressIndicator(
-                        color = Color.White,
-                        modifier = Modifier.size(24.dp)
-                    )
+                    MorphLoadingIndicator()
                 } else {
                     Text(
                         text = "Войти",

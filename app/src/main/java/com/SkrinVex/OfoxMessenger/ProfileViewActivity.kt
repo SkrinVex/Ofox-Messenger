@@ -36,6 +36,7 @@ import coil.compose.AsyncImagePainter
 import coil.disk.DiskCache
 import coil.request.ImageRequest
 import com.SkrinVex.OfoxMessenger.network.ProfileCheckResponse
+import com.SkrinVex.OfoxMessenger.ui.common.MorphLoadingIndicator
 import com.SkrinVex.OfoxMessenger.ui.common.enableInternetCheck
 import com.SkrinVex.OfoxMessenger.ui.theme.OfoxMessengerTheme
 import com.SkrinVex.OfoxMessenger.ui.viewer.PhotoViewerActivity
@@ -134,8 +135,7 @@ fun ProfileViewScreen(
         when {
             profileState.isLoading -> {
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(color = Color(0xFFFF6B35))
-                }
+                    MorphLoadingIndicator()                }
             }
             profileState.userNotFound -> {
                 // Показываем диалог поверх всего содержимого
@@ -314,11 +314,7 @@ fun ProfileHeader(
                                 .background(Color.Black.copy(alpha = 0.3f)),
                             contentAlignment = Alignment.Center
                         ) {
-                            CircularProgressIndicator(
-                                color = Color(0xFFFF6B35),
-                                modifier = Modifier.size(24.dp),
-                                strokeWidth = 2.dp
-                            )
+                            MorphLoadingIndicator()
                         }
                     }
                 }
@@ -372,11 +368,7 @@ fun ProfileHeader(
                                     .fillMaxSize(),
                                 contentAlignment = Alignment.Center
                             ) {
-                                CircularProgressIndicator(
-                                    color = Color(0xFFFF6B35),
-                                    modifier = Modifier.size(24.dp),
-                                    strokeWidth = 2.dp
-                                )
+                                MorphLoadingIndicator()
                             }
                         }
 
@@ -573,11 +565,7 @@ fun FriendActionButton(
         enabled = !isLoading
     ) {
         if (isLoading) {
-            CircularProgressIndicator(
-                modifier = Modifier.size(16.dp),
-                color = textColor,
-                strokeWidth = 2.dp
-            )
+            MorphLoadingIndicator()
             Spacer(modifier = Modifier.width(8.dp))
         } else {
             Icon(

@@ -50,6 +50,7 @@ import com.SkrinVex.OfoxMessenger.network.ProfileCheckResponse
 import com.SkrinVex.OfoxMessenger.ui.common.enableInternetCheck
 import com.SkrinVex.OfoxMessenger.ui.theme.OfoxMessengerTheme
 import com.SkrinVex.OfoxMessenger.network.NewsItem
+import com.SkrinVex.OfoxMessenger.ui.common.MorphLoadingIndicator
 import com.SkrinVex.OfoxMessenger.ui.dialogs.DialogController
 import com.SkrinVex.OfoxMessenger.ui.dialogs.GlobalDialogHost
 import com.SkrinVex.OfoxMessenger.ui.viewer.PhotoViewerActivity
@@ -191,8 +192,7 @@ fun MainScreen(
     ) { paddingValues ->
         if (mainPageState.isLoading) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Color(0xFFFF6B35))
-            }
+                MorphLoadingIndicator()            }
         } else if (mainPageState.mainPageData?.profile != null) {
             LazyColumn(
                 modifier = Modifier
@@ -461,11 +461,7 @@ fun NewsCard(newsItem: NewsItem) {
                                 ),
                             contentAlignment = Alignment.Center
                         ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(48.dp),
-                                color = Color(0xFFFF6B35),
-                                strokeWidth = 4.dp
-                            )
+                            MorphLoadingIndicator()
                         }
                     }
                 }

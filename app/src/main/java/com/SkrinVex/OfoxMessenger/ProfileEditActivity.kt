@@ -39,6 +39,7 @@ import com.SkrinVex.OfoxMessenger.ui.theme.OfoxMessengerTheme
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.SkrinVex.OfoxMessenger.ProfileEditActivity.Companion.RESULT_PROFILE_UPDATED
+import com.SkrinVex.OfoxMessenger.ui.common.MorphLoadingIndicator
 import java.io.File
 import java.io.Serializable
 
@@ -509,11 +510,7 @@ fun ProfileEditScreen(uid: String) {
                         )
                     ) {
                         if (state.isSaving) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(24.dp),
-                                color = Color.White,
-                                strokeWidth = 2.dp
-                            )
+                            MorphLoadingIndicator()
                         } else {
                             Text(
                                 text = "Продолжить",
@@ -553,11 +550,7 @@ fun ProfileEditScreen(uid: String) {
                     )
                 ) {
                     if (state.isSaving) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            color = Color.White,
-                            strokeWidth = 2.dp
-                        )
+                        MorphLoadingIndicator()
                     } else {
                         Text(
                             text = "Сохранить",

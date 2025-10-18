@@ -13,7 +13,7 @@ import androidx.compose.material3.LoadingIndicatorDefaults
 @Composable
 fun MorphLoadingIndicator(
     modifier: Modifier = Modifier,
-    color: Color = Color(0xFFFF6B35), // твой фирменный оранжевый
+    color: Color = Color(0xFFFF6B35),
     sizeDp: Int = 48
 ) {
     LoadingIndicator(

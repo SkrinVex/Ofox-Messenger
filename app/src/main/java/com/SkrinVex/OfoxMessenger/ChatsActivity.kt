@@ -48,6 +48,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewModelScope
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.SkrinVex.OfoxMessenger.ui.common.MorphLoadingIndicator
 import com.SkrinVex.OfoxMessenger.utils.ImageUtils
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.DataSnapshot
@@ -350,8 +351,7 @@ fun ChatsScreen(vm: ChatsViewModel, onBack: () -> Unit) {
                     color = Color(0xFF1E1E1E).copy(alpha = 0.9f)
                 ) {
                     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                        CircularProgressIndicator(color = Color(0xFFFF6B35))
-                        Spacer(Modifier.height(12.dp))
+                        MorphLoadingIndicator()
                         Text(
                             text = if (state.creating) "Создание..." else "Загрузка...",
                             color = Color.White.copy(alpha = 0.9f)

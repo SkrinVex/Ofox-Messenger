@@ -61,6 +61,7 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.core.graphics.drawable.toBitmap
 import coil.request.ImageRequest
+import com.SkrinVex.OfoxMessenger.ui.common.MorphLoadingIndicator
 import com.SkrinVex.OfoxMessenger.ui.common.enableInternetCheck
 import com.SkrinVex.OfoxMessenger.utils.SmartLinkText
 import kotlinx.coroutines.delay
@@ -239,8 +240,7 @@ fun PostsScreen(viewModel: PostsViewModel) {
     ) { paddingValues ->
         if (state.isLoading && state.posts.isEmpty()) {
             Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                CircularProgressIndicator(color = Color(0xFFFF6B35))
-            }
+                MorphLoadingIndicator()            }
         } else {
             Column(
                 modifier = Modifier
@@ -309,10 +309,7 @@ fun PostsScreen(viewModel: PostsViewModel) {
                                     .padding(16.dp),
                                 contentAlignment = Alignment.Center
                             ) {
-                                CircularProgressIndicator(
-                                    color = Color(0xFFFF6B35),
-                                    strokeWidth = 4.dp
-                                )
+                                MorphLoadingIndicator()
                             }
                         }
                     }
@@ -470,11 +467,7 @@ fun CreatePostDialog(
                         modifier = Modifier.weight(1f)
                     ) {
                         if (state.isUploading) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(24.dp),
-                                color = Color.White,
-                                strokeWidth = 2.dp
-                            )
+                            MorphLoadingIndicator()
                         } else {
                             Text("Создать", fontSize = 14.sp)
                         }
@@ -641,11 +634,7 @@ fun EditPostDialog(
                         modifier = Modifier.weight(1f)
                     ) {
                         if (state.isUploading) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(24.dp),
-                                color = Color.White,
-                                strokeWidth = 2.dp
-                            )
+                            MorphLoadingIndicator()
                         } else {
                             Text("Сохранить", fontSize = 14.sp)
                         }
@@ -717,11 +706,7 @@ fun ReactionButtons(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (isLoading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        color = Color(0xFFFF6B35),
-                        strokeWidth = 2.dp
-                    )
+                    MorphLoadingIndicator()
                 } else {
                     Icon(
                         imageVector = Icons.Rounded.ThumbUp,
@@ -751,11 +736,7 @@ fun ReactionButtons(
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 if (isLoading) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(20.dp),
-                        color = Color(0xFFFF6B35),
-                        strokeWidth = 2.dp
-                    )
+                    MorphLoadingIndicator()
                 } else {
                     Icon(
                         imageVector = Icons.Rounded.ThumbDown,
@@ -990,11 +971,7 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
                                 .background(Color.Black.copy(alpha = 0.3f), RoundedCornerShape(8.dp)),
                             contentAlignment = Alignment.Center
                         ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(48.dp),
-                                color = Color(0xFFFF6B35),
-                                strokeWidth = 4.dp
-                            )
+                            MorphLoadingIndicator()
                         }
                     }
                     if (urls.size > 1) {
@@ -1329,11 +1306,7 @@ fun CommentsBottomSheet(
                     enabled = !isLoading
                 ) {
                     if (isLoading) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(24.dp),
-                            color = Color(0xFFFF6B35),
-                            strokeWidth = 2.dp
-                        )
+                        MorphLoadingIndicator()
                     } else {
                         Icon(
                             imageVector = Icons.Rounded.Send,
