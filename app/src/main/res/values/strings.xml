@@ -3,4 +3,5 @@
     <string name="title_activity_flappy">Flappy</string>
     <string name="title_activity_group_chat">GroupChatActivity</string>
     <string name="title_activity_chats">ChatsActivity</string>
+    <string name="manage_storage_label">Управление памятью</string>
 </resources>
