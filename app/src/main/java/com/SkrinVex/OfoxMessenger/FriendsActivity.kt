@@ -227,16 +227,28 @@ fun FriendsScreen(
 }
 
 @Composable
-fun SearchBar(query: String, onQueryChange: (String) -> Unit) {
+fun SearchBar(
+    query: String,
+    onQueryChange: (String) -> Unit
+) {
     OutlinedTextField(
         value = query,
         onValueChange = onQueryChange,
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 8.dp),
-        placeholder = { Text("Поиск пользователей...", color = Color.Gray) },
+        placeholder = {
+            Text(
+                text = "Поиск пользователей...",
+                color = Color.Gray
+            )
+        },
         leadingIcon = {
-            Icon(Icons.Rounded.Search, contentDescription = "Поиск", tint = Color(0xFFFF6B35))
+            Icon(
+                imageVector = Icons.Rounded.Search,
+                contentDescription = "Поиск",
+                tint = Color(0xFFFF6B35)
+            )
         },
         shape = RoundedCornerShape(16.dp),
         colors = TextFieldDefaults.colors(
@@ -249,7 +261,11 @@ fun SearchBar(query: String, onQueryChange: (String) -> Unit) {
             cursorColor = Color(0xFFFF6B35)
         ),
         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
-        keyboardActions = KeyboardActions(onSearch = { /* закрыть клавиатуру */ })
+        keyboardActions = KeyboardActions(
+            onSearch = {
+                // TODO: закрыть клавиатуру, если хочешь
+            }
+        )
     )
 }
 
@@ -287,32 +303,41 @@ fun FriendCard(user: Friend, onClick: () -> Unit) {
                     contentScale = ContentScale.Crop
                 )
 
-                // Онлайн индикатор
                 if (user.isOnline) {
                     Box(
                         modifier = Modifier
                             .size(16.dp)
                             .align(Alignment.BottomEnd)
                             .offset(x = 2.dp, y = 2.dp)
-                            .background(Color(0xFF101010), CircleShape) // темная обводка
+                            .background(Color(0xFF101010), CircleShape)
                             .padding(2.dp)
                     ) {
                         Box(
                             modifier = Modifier
                                 .fillMaxSize()
-                                .background(Color(0xFF00C851), CircleShape) // зеленый кружок
+                                .background(Color(0xFF00C851), CircleShape)
                         )
                     }
                 }
             }
 
             Column {
-                Text(
-                    text = user.nickname ?: user.username,
-                    color = Color.White,
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold
-                )
+                if (!user.nickname.isNullOrBlank()) {
+                    Text(
+                        text = user.nickname,
+                        color = Color.White,
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                } else {
+                    Text(
+                        text = "Никнейм не указан",
+                        color = Color(0xFFFF6B35),
+                        fontSize = 16.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
                 SmartLinkText(
                     text = user.status ?: "Статус не указан",
                     color = Color.Gray,

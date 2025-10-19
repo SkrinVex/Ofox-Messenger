@@ -59,14 +59,21 @@ class App : Application(), Application.ActivityLifecycleCallbacks {
         try {
             val db = FirebaseDatabase.getInstance()
             db.setPersistenceEnabled(true)
-            db.setPersistenceCacheSizeBytes(50L * 1024 * 1024)
+            db.setPersistenceCacheSizeBytes(100L * 1024 * 1024) // немного увеличим кеш, раз больше данных
 
+            // ветки приложения
             db.getReference("users").keepSynced(true)
             db.getReference("posts").keepSynced(true)
             db.getReference("chats").keepSynced(true)
             db.getReference("news").keepSynced(true)
             db.getReference("group_chats").keepSynced(true)
             db.getReference("user_groups").keepSynced(true)
+            db.getReference("messages").keepSynced(true)
+            db.getReference("group_messages").keepSynced(true)
+            db.getReference("friend_requests").keepSynced(true)
+            db.getReference("notifications").keepSynced(true)
+            db.getReference("user_settings").keepSynced(true)
+            db.getReference("media").keepSynced(true)
         } catch (e: DatabaseException) {
             // если кто-то обратился раньше — игнорируем
         }
@@ -90,7 +97,7 @@ class App : Application(), Application.ActivityLifecycleCallbacks {
     }
 
     private fun initImageLoader() {
-        imageLoader = ImageLoader.Builder(this)
+        val customLoader = ImageLoader.Builder(this)
             .memoryCache {
                 if (ImageCacheConfig.enableMemory) {
                     MemoryCache.Builder(this)
@@ -111,8 +118,18 @@ class App : Application(), Application.ActivityLifecycleCallbacks {
             .components {
                 add(SvgDecoder.Factory())
             }
+            .respectCacheHeaders(false) // <-- важно: игнорировать заголовки no-cache
+            .diskCachePolicy(coil.request.CachePolicy.ENABLED) // <-- включаем диск
+            .memoryCachePolicy(coil.request.CachePolicy.ENABLED) // <-- включаем память
+            .networkCachePolicy(coil.request.CachePolicy.ENABLED) // <-- сеть при необходимости
             .crossfade(true)
             .build()
+
+        // Сохраняем для ручного доступа
+        imageLoader = customLoader
+
+        // Делаем этот ImageLoader глобальным для Coil
+        coil.Coil.setImageLoader(customLoader)
     }
 
     private fun checkNotificationPermission() {
