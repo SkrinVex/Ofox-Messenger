@@ -48,6 +48,15 @@
             </intent-filter>
         </activity> <!-- MainActivity -->
         <activity
+            android:name=".CacheSettingsActivity"
+            android:exported="true">
+
+            <intent-filter>
+                <action android:name="android.intent.action.MANAGE_STORAGE" />
+                <category android:name="android.intent.category.DEFAULT" />
+            </intent-filter>
+        </activity>
+        <activity
             android:name=".MainActivity"
             android:exported="false"
             android:theme="@style/Theme.OfoxMessenger" /> <!-- PostsActivity с intent-фильтрами для deep link'ов -->

@@ -27,15 +27,29 @@ object PermissionState {
 }
 
 object ImageCacheConfig {
+    // Основные параметры кэша
     var memoryCachePercent: Double = 0.25
-    var diskCacheSize: Long = 250L * 1024 * 1024
-    var enableDisk: Boolean = true
+    var diskCacheSize: Long = 512L * 1024 * 1024
     var enableMemory: Boolean = true
+    var enableDisk: Boolean = true
+
+    // Детальные настройки кэширования
+    var cacheMessages: Boolean = true
+    var cacheGroupMessages: Boolean = true
+    var cacheNotifications: Boolean = true
+    var cacheMedia: Boolean = true
+    var cacheAvatars: Boolean = true
+    var cachePosts: Boolean = true
+
+    // Размеры для разных типов
+    var messagesCacheSize: Long = 128L * 1024 * 1024
+    var groupCacheSize: Long = 128L * 1024 * 1024
+    var notificationsCacheSize: Long = 64L * 1024 * 1024
+    var mediaCacheSize: Long = 512L * 1024 * 1024
+    var avatarsCacheSize: Long = 128L * 1024 * 1024
+    var postsCacheSize: Long = 256L * 1024 * 1024
 }
 
-/**
- * true = dev (google-dev.json), false = prod (google-services.json)
- */
 object DbConfig {
     var useDev = true
 }
@@ -45,44 +59,70 @@ class App : Application(), Application.ActivityLifecycleCallbacks {
     lateinit var imageLoader: ImageLoader
         private set
 
-    // счётчик активных Activity
     private val activityCount = AtomicInteger(0)
 
     override fun onCreate() {
         super.onCreate()
         CrashHandler.init(this)
 
-        // --- Firebase init ---
+        // Загрузить настройки кэша из SharedPreferences
+        CacheManager.loadSettings(this)
+
         FirebaseApp.initializeApp(this)
 
-        // --- Firebase Database ---
         try {
             val db = FirebaseDatabase.getInstance()
             db.setPersistenceEnabled(true)
-            db.setPersistenceCacheSizeBytes(100L * 1024 * 1024) // немного увеличим кеш, раз больше данных
 
-            // ветки приложения
+            // Динамический размер кэша базы данных
+            val dbCacheSize = calculateDbCacheSize()
+            db.setPersistenceCacheSizeBytes(dbCacheSize)
+
+            // Синхронизация только для включенных типов данных
+            if (ImageCacheConfig.cacheMessages) {
+                db.getReference("chats").keepSynced(true)
+                db.getReference("messages").keepSynced(true)
+            }
+            if (ImageCacheConfig.cacheGroupMessages) {
+                db.getReference("group_chats").keepSynced(true)
+                db.getReference("group_messages").keepSynced(true)
+                db.getReference("user_groups").keepSynced(true)
+            }
+            if (ImageCacheConfig.cacheNotifications) {
+                db.getReference("notifications").keepSynced(true)
+                db.getReference("friend_requests").keepSynced(true)
+            }
+            if (ImageCacheConfig.cachePosts) {
+                db.getReference("posts").keepSynced(true)
+                db.getReference("news").keepSynced(true)
+            }
+
+            // Всегда синхронизируем пользователей и настройки
             db.getReference("users").keepSynced(true)
-            db.getReference("posts").keepSynced(true)
-            db.getReference("chats").keepSynced(true)
-            db.getReference("news").keepSynced(true)
-            db.getReference("group_chats").keepSynced(true)
-            db.getReference("user_groups").keepSynced(true)
-            db.getReference("messages").keepSynced(true)
-            db.getReference("group_messages").keepSynced(true)
-            db.getReference("friend_requests").keepSynced(true)
-            db.getReference("notifications").keepSynced(true)
             db.getReference("user_settings").keepSynced(true)
-            db.getReference("media").keepSynced(true)
+
+            if (ImageCacheConfig.cacheMedia) {
+                db.getReference("media").keepSynced(true)
+            }
         } catch (e: DatabaseException) {
-            // если кто-то обратился раньше — игнорируем
+            // игнорируем
         }
 
         initImageLoader()
         checkNotificationPermission()
-
-        // регистрируем коллбэки жизненного цикла Activity
         registerActivityLifecycleCallbacks(this)
+    }
+
+    private fun calculateDbCacheSize(): Long {
+        var total = 50L * 1024 * 1024 // базовый размер 50MB
+
+        if (ImageCacheConfig.cacheMessages) total += 30L * 1024 * 1024
+        if (ImageCacheConfig.cacheGroupMessages) total += 30L * 1024 * 1024
+        if (ImageCacheConfig.cacheNotifications) total += 20L * 1024 * 1024
+        if (ImageCacheConfig.cachePosts) total += 40L * 1024 * 1024
+        if (ImageCacheConfig.cacheMedia) total += 80L * 1024 * 1024
+
+        return total
     }
 
     private fun updateLastActivity() {
@@ -96,7 +136,7 @@ class App : Application(), Application.ActivityLifecycleCallbacks {
         updateLastActivity()
     }
 
-    private fun initImageLoader() {
+    fun initImageLoader() {
         val customLoader = ImageLoader.Builder(this)
             .memoryCache {
                 if (ImageCacheConfig.enableMemory) {
@@ -118,17 +158,14 @@ class App : Application(), Application.ActivityLifecycleCallbacks {
             .components {
                 add(SvgDecoder.Factory())
             }
-            .respectCacheHeaders(false) // <-- важно: игнорировать заголовки no-cache
-            .diskCachePolicy(coil.request.CachePolicy.ENABLED) // <-- включаем диск
-            .memoryCachePolicy(coil.request.CachePolicy.ENABLED) // <-- включаем память
-            .networkCachePolicy(coil.request.CachePolicy.ENABLED) // <-- сеть при необходимости
+            .respectCacheHeaders(false)
+            .diskCachePolicy(coil.request.CachePolicy.ENABLED)
+            .memoryCachePolicy(coil.request.CachePolicy.ENABLED)
+            .networkCachePolicy(coil.request.CachePolicy.ENABLED)
             .crossfade(true)
             .build()
 
-        // Сохраняем для ручного доступа
         imageLoader = customLoader
-
-        // Делаем этот ImageLoader глобальным для Coil
         coil.Coil.setImageLoader(customLoader)
     }
 
@@ -148,14 +185,27 @@ class App : Application(), Application.ActivityLifecycleCallbacks {
         imageLoader.diskCache?.clear()
     }
 
-    // ------------------------------
-    // ActivityLifecycleCallbacks
-    // ------------------------------
+    fun clearSpecificCache(type: String) {
+        when (type) {
+            "messages" -> clearCacheDirectory("messages_cache")
+            "groups" -> clearCacheDirectory("group_cache")
+            "notifications" -> clearCacheDirectory("notification_cache")
+            "media" -> clearCacheDirectory("media_cache")
+            "avatars" -> clearCacheDirectory("avatar_cache")
+            "posts" -> clearCacheDirectory("posts_cache")
+        }
+    }
+
+    private fun clearCacheDirectory(dirName: String) {
+        val dir = cacheDir.resolve(dirName)
+        if (dir.exists()) {
+            dir.deleteRecursively()
+        }
+    }
 
     override fun onActivityStarted(activity: Activity) {
         val count = activityCount.incrementAndGet()
         if (count == 1) {
-            // приложение стало видимым — ставим ONLINE
             setUserOnline(true)
         }
     }
@@ -163,18 +213,16 @@ class App : Application(), Application.ActivityLifecycleCallbacks {
     override fun onActivityStopped(activity: Activity) {
         val count = activityCount.decrementAndGet()
         if (count == 0) {
-            // приложение полностью скрыто — ставим OFFLINE
             setUserOnline(false)
         }
     }
 
     private fun setUserOnline(isOnline: Boolean) {
-        val uid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid ?: return
+        val uid = FirebaseAuth.getInstance().currentUser?.uid ?: return
         val ref = Firebase.database.getReference("users/$uid/online")
         ref.setValue(isOnline)
     }
 
-    // Остальные коллбэки можно оставить пустыми
     override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) {}
     override fun onActivityPaused(activity: Activity) {}
     override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) {}

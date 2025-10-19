@@ -78,6 +78,7 @@ dependencies {
 
     implementation(platform("com.google.firebase:firebase-bom:32.7.3"))
     implementation("com.google.firebase:firebase-database-ktx")
+    implementation("androidx.datastore:datastore-preferences:1.1.7")
     implementation("com.google.firebase:firebase-auth-ktx")
     implementation("com.google.accompanist:accompanist-systemuicontroller:0.36.0")
     implementation("com.google.firebase:firebase-messaging:25.0.0")
