@@ -10,6 +10,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
@@ -94,7 +95,6 @@ fun PostsScreen(viewModel: PostsViewModel) {
     var createPostState by remember { mutableStateOf(CreatePostState()) }
     var searchQuery by remember { mutableStateOf("") }
     var isSearchActive by remember { mutableStateOf(false) }
-
     // Анимация для поисковой строки
     val searchBarAlpha by animateFloatAsState(
         targetValue = if (isSearchActive) 1f else 0f,
@@ -767,6 +767,8 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
     var showCommentsSheet by remember { mutableStateOf(false) }
     var likesCount by remember { mutableStateOf(post.likes.count { it.value == "like" }) }
     var dislikesCount by remember { mutableStateOf(post.likes.count { it.value == "dislike" }) }
+    val state by viewModel.state.collectAsState()
+    val livePost = state.posts.find { it.id == post.id } ?: post
     var isReactionLoading by remember { mutableStateOf(false) } // Локальная загрузка реакции
     var editPostState by remember {
         mutableStateOf(
@@ -1023,10 +1025,11 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
                         Spacer(modifier = Modifier.width(4.dp))
                     }
                     Text(
-                        text = "Комментарии (${post.comments.size})",
-                        color = Color.White,
+                        text = "Комментарии (${livePost.comments.size})",
+                        color = Color.White.copy(alpha = 0.7f),
                         fontSize = 14.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(bottom = 6.dp)
                     )
                     Spacer(modifier = Modifier.width(4.dp))
                     Icon(
@@ -1177,18 +1180,28 @@ fun CommentsBottomSheet(
     val context = LocalContext.current
     val focusRequester = remember { FocusRequester() }
     val keyboardController = LocalSoftwareKeyboardController.current
+    val state by viewModel.state.collectAsState()
+
+    val livePost = state.posts.find { it.id == post.id } ?: post
+
+
 
     var commentText by remember { mutableStateOf("") }
     var isLoading by remember { mutableStateOf(false) }
     var showActionsSheet by remember { mutableStateOf<CommentItem?>(null) }
+    var expandedReplies by remember { mutableStateOf<Set<String>>(emptySet()) }
 
     val sheetState = rememberModalBottomSheetState(
         skipPartiallyExpanded = true,
     )
 
-    // Focus текстового поля при первом запуске
+    // Группируем комментарии: основные и ответы
+    val mainComments = livePost.comments.filter { it.replyToCommentId == null }
+        val repliesMap = livePost.comments.filter { it.replyToCommentId != null }
+            .groupBy { it.replyToCommentId!! }
+
     LaunchedEffect(Unit) {
-        delay(300) // небольшая задержка для стабильности
+        delay(300)
         focusRequester.requestFocus()
     }
 
@@ -1244,22 +1257,63 @@ fun CommentsBottomSheet(
                     .fillMaxWidth()
                     .weight(1f)
             ) {
-                items(post.comments) { comment ->
-                    CommentItem(
-                        comment = comment,
+                items(mainComments) { mainComment ->
+                    CommentTree(
+                        comment = mainComment,
+                        repliesMap = repliesMap,
                         currentUid = currentUid,
+                        depth = 0,
                         onProfileClick = {
                             val intent = Intent(context, ProfileViewActivity::class.java).apply {
-                                putExtra("uid", currentUid)
-                                if (comment.user_id != currentUid) {
-                                    putExtra("friend_uid", comment.user_id)
+                                // Передаём UID пользователя, профиль которого хотим открыть (комментатор)
+                                putExtra("uid", mainComment.user_id)
+                                // Если это не наш собственный профиль — указываем, кто просматривает (currentUid)
+                                if (mainComment.user_id != currentUid) {
+                                    putExtra("friend_uid", currentUid)
                                     putExtra("notificationId", null as String?)
                                 }
                             }
                             context.startActivity(intent)
                         },
-                        onLongPress = { showActionsSheet = comment }
+                        onLongPress = { showActionsSheet = it },
+                        onReply = {
+                            viewModel.onReplyToComment(it)
+                            focusRequester.requestFocus() // Сразу фокус на поле ввода
+                        }
                     )
+                }
+            }
+            AnimatedVisibility(visible = state.replyingToComment != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 8.dp)
+                        .background(Color.Black.copy(alpha = 0.2f), RoundedCornerShape(12.dp))
+                        .padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Ответ на комментарий ${state.replyingToComment?.username ?: "Пользователь"}:",
+                            color = Color(0xFFFF6B35),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            state.replyingToComment?.content ?: "",
+                            color = Color.White.copy(alpha = 0.8f),
+                            fontSize = 14.sp,
+                            maxLines = 1
+                        )
+                    }
+                    IconButton(
+                        onClick = {
+                            viewModel.cancelReplyToComment()
+                            keyboardController?.show()
+                        }
+                    ) {
+                        Icon(Icons.Rounded.Close, contentDescription = "Отменить ответ", tint = Color.Gray)
+                    }
                 }
             }
             Row(
@@ -1271,7 +1325,13 @@ fun CommentsBottomSheet(
                 OutlinedTextField(
                     value = commentText,
                     onValueChange = { commentText = it },
-                    placeholder = { Text("Напишите комментарий", color = Color.Gray) },
+                    placeholder = {
+                        if (state.replyingToComment != null) {
+                            Text("Ответ ${state.replyingToComment?.username}...", color = Color.Gray)
+                        } else {
+                            Text("Напишите комментарий...", color = Color.Gray)
+                        }
+                    },
                     shape = RoundedCornerShape(20.dp),
                     modifier = Modifier
                         .weight(1f)
@@ -1293,10 +1353,11 @@ fun CommentsBottomSheet(
                         if (commentText.isNotBlank()) {
                             isLoading = true
                             keyboardController?.hide()
-                            viewModel.addComment(post.id!!, currentUid, commentText) { success, message ->
+                            viewModel.addComment(post.id, currentUid, commentText) { success, message ->
                                 isLoading = false
                                 if (success) {
                                     commentText = ""
+                                    viewModel.cancelReplyToComment()
                                 } else {
                                     Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                                 }
@@ -1331,8 +1392,13 @@ fun CommentsBottomSheet(
                 Toast.makeText(context, "Комментарий скопирован", Toast.LENGTH_SHORT).show()
                 showActionsSheet = null
             },
+            onReply = {
+                viewModel.onReplyToComment(comment)
+                showActionsSheet = null
+                focusRequester.requestFocus()
+            },
             onDelete = {
-                viewModel.deleteComment(post.id!!, comment.id) { success, message ->
+                viewModel.deleteComment(post.id, comment.id) { success, message ->
                     Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                     if (success) showActionsSheet = null
                 }
@@ -1347,7 +1413,8 @@ fun CommentItem(
     comment: CommentItem,
     currentUid: String,
     onProfileClick: () -> Unit,
-    onLongPress: () -> Unit
+    onLongPress: () -> Unit,
+    isReply: Boolean = false
 ) {
     Surface(
         modifier = Modifier
@@ -1357,7 +1424,7 @@ fun CommentItem(
             .pointerInput(Unit) {
                 detectTapGestures(onLongPress = { onLongPress() })
             },
-        color = Color(0xFF2A2A2A).copy(alpha = 0.95f),
+        color = Color(0xFF2A2A2A).copy(alpha = if (isReply) 0.7f else 0.95f),
         shape = RoundedCornerShape(12.dp),
         tonalElevation = 4.dp
     ) {
@@ -1369,7 +1436,7 @@ fun CommentItem(
                 model = comment.profile_photo?.takeIf { it.isNotBlank() },
                 contentDescription = "Аватар комментатора",
                 modifier = Modifier
-                    .size(32.dp)
+                    .size(if (isReply) 28.dp else 32.dp)
                     .clip(CircleShape)
                     .background(Color(0xFF333333))
                     .clickable { onProfileClick() },
@@ -1377,23 +1444,127 @@ fun CommentItem(
             )
             Spacer(modifier = Modifier.width(8.dp))
             Column {
+                // Показываем "ответ на @username" если это ответ
+                if (comment.replyToCommentUsername != null) {
+                    Text(
+                        text = "ответ на ${comment.replyToCommentUsername}",
+                        color = Color(0xFFFF6B35),
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Medium,
+                        modifier = Modifier.padding(bottom = 2.dp)
+                    )
+                }
                 Text(
-                    text = comment.nickname ?: comment.username ?: "Пользователь",
+                    text = comment.username ?: "Пользователь",
                     color = Color.White,
-                    fontSize = 14.sp,
+                    fontSize = if (isReply) 13.sp else 14.sp,
                     fontWeight = FontWeight.Bold,
                     modifier = Modifier.clickable { onProfileClick() }
                 )
                 SmartLinkText(
                     text = comment.content,
                     color = Color.White,
-                    fontSize = 14.sp
+                    fontSize = if (isReply) 13.sp else 14.sp
                 )
                 Text(
                     text = comment.created_at,
                     color = Color.Gray,
-                    fontSize = 12.sp
+                    fontSize = if (isReply) 11.sp else 12.sp
                 )
+            }
+        }
+    }
+}
+
+@Composable
+fun CommentTree(
+    comment: CommentItem,
+    repliesMap: Map<String, List<CommentItem>>,
+    currentUid: String,
+    depth: Int, // Глубина вложенности
+    onProfileClick: () -> Unit,
+    onLongPress: (CommentItem) -> Unit,
+    onReply: (CommentItem) -> Unit
+) {
+    // Состояние: развернуты ли ответы прямо сейчас
+    var isExpanded by remember { mutableStateOf(false) }
+    val replies = repliesMap[comment.id] ?: emptyList()
+
+    Column {
+        // 1. Рисуем сам комментарий
+        // Если это ответ (depth > 0), чуть уменьшаем его размер или меняем паддинг, если нужно
+        CommentItem(
+            comment = comment,
+            currentUid = currentUid,
+            onProfileClick = onProfileClick,
+            onLongPress = { onLongPress(comment) },
+            isReply = depth > 0
+        )
+
+        // 2. Если есть ответы — рисуем кнопку "Показать" и сами ответы
+        if (replies.isNotEmpty()) {
+            Column(
+                modifier = Modifier
+                    .padding(start = 48.dp) // Отступ слева (под аватаркой)
+            ) {
+                // Кнопка "Показать/Скрыть ответы" в стиле TikTok (с черточкой)
+                Row(
+                    modifier = Modifier
+                        .padding(vertical = 8.dp)
+                        .clickable { isExpanded = !isExpanded },
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Горизонтальная черточка
+                    Box(
+                        modifier = Modifier
+                            .width(24.dp)
+                            .height(1.dp)
+                            .background(Color.Gray)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = if (isExpanded) "Скрыть" else "Посмотреть ответы (${replies.size})",
+                        color = Color.Gray,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Icon(
+                        imageVector = if (isExpanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
+                        contentDescription = null,
+                        tint = Color.Gray,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+
+                // Контейнер для ответов (появляется при isExpanded = true)
+                AnimatedVisibility(visible = isExpanded) {
+                    Row {
+                        // Вертикальная линия слева (ветка дерева)
+                        Box(
+                            modifier = Modifier
+                                .width(1.dp) // Тонкая линия
+                                .fillMaxHeight() // Растягивается на высоту всех ответов
+                                .background(Color.Gray.copy(alpha = 0.3f))
+                        )
+
+                        // Колонка с самими ответами
+                        Column {
+                            replies.forEach { reply ->
+                                // Рекурсивный вызов (рисуем ответ на ответ)
+                                CommentTree(
+                                    comment = reply,
+                                    repliesMap = repliesMap,
+                                    currentUid = currentUid,
+                                    depth = depth + 1,
+                                    onProfileClick = onProfileClick,
+                                    onLongPress = onLongPress,
+                                    onReply = onReply
+                                )
+                            }
+                        }
+                    }
+                }
             }
         }
     }
@@ -1405,6 +1576,7 @@ fun CommentActionsBottomSheet(
     comment: CommentItem,
     isOwnComment: Boolean,
     onCopy: () -> Unit,
+    onReply: () -> Unit,
     onDelete: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -1453,6 +1625,12 @@ fun CommentActionsBottomSheet(
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.padding(bottom = 16.dp)
             )
+            OptionButton(
+                icon = Icons.Rounded.Reply,
+                label = "Ответить",
+                onClick = onReply
+            )
+            Spacer(modifier = Modifier.height(12.dp))
             if (isOwnComment) {
                 OptionButton(
                     icon = Icons.Rounded.Delete,

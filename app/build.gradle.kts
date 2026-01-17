@@ -20,14 +20,38 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        create("release") {
+            storeFile = file(
+                System.getenv("OFOX_STORE_FILE")
+                    ?: project.findProperty("OFOX_STORE_FILE") as String
+            )
+
+            storePassword =
+                System.getenv("OFOX_STORE_PASSWORD")
+                    ?: project.findProperty("OFOX_STORE_PASSWORD") as String
+
+            keyAlias =
+                System.getenv("OFOX_KEY_ALIAS")
+                    ?: project.findProperty("OFOX_KEY_ALIAS") as String
+
+            keyPassword =
+                System.getenv("OFOX_KEY_PASSWORD")
+                    ?: project.findProperty("OFOX_KEY_PASSWORD") as String
+        }
+    }
+
     buildTypes {
-        buildTypes {
-            release {
-                proguardFiles(
-                    getDefaultProguardFile("proguard-android-optimize.txt"),
-                    "proguard-rules.pro"
-                )
-            }
+        getByName("release") {
+            isMinifyEnabled = false
+            isShrinkResources = false
+
+            signingConfig = signingConfigs.getByName("release")
+
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
     }
     compileOptions {

@@ -43,6 +43,14 @@ abstract class BaseChatViewModel(
 
     abstract fun clearTyping()
 
+    fun onReply(message: Message) {
+        _state.value = _state.value.copy(replyingTo = message)
+    }
+
+    fun cancelReply() {
+        _state.value = _state.value.copy(replyingTo = null)
+    }
+
     fun sendMessage() {
         viewModelScope.launch {
             val textToSend = _state.value.messageText.trim()
@@ -52,30 +60,38 @@ abstract class BaseChatViewModel(
             try {
                 val messageId = UUID.randomUUID().toString()
                 val timestamp = System.currentTimeMillis()
+                val replyingTo = _state.value.replyingTo
 
                 val tempMessage = Message(
                     id = messageId,
                     senderId = currentUserId,
                     content = textToSend,
                     timestamp = timestamp,
-                    status = "sent"
+                    status = "sent",
+                    replyToMessageId = replyingTo?.id,
+                    replyToMessageContent = replyingTo?.content
                 )
                 _state.value = _state.value.copy(
                     messages = (_state.value.messages + tempMessage).sortedBy { it.timestamp },
                     messageText = "",
                     isSending = false,
-                    error = null
+                    error = null,
+                    replyingTo = null // Clear reply state after sending
                 )
 
                 clearTyping()
 
-                val message = mapOf(
+                val message = mutableMapOf<String, Any>(
                     "id" to messageId,
                     "senderId" to currentUserId,
                     "content" to textToSend,
                     "timestamp" to timestamp,
                     "status" to "sent"
                 )
+                if (replyingTo != null) {
+                    message["replyToMessageId"] = replyingTo.id
+                    message["replyToMessageContent"] = replyingTo.content
+                }
 
                 chatRef.child(messageId).setValue(message).await()
 
@@ -341,6 +357,9 @@ abstract class BaseChatViewModel(
                 else -> 0L
             }
             val status = data["status"] as? String ?: "sent"
+            val replyToMessageId = data["replyToMessageId"] as? String
+            val replyToMessageContent = data["replyToMessageContent"] as? String
+
             if (id.isEmpty() || senderId.isEmpty() || content.isEmpty()) {
                 Log.e("BaseChatViewModel", "Missing required fields for message $id")
                 return null
@@ -350,7 +369,9 @@ abstract class BaseChatViewModel(
                 senderId = senderId,
                 content = content,
                 timestamp = timestamp,
-                status = status
+                status = status,
+                replyToMessageId = replyToMessageId,
+                replyToMessageContent = replyToMessageContent
             )
         } catch (e: Exception) {
             Log.e("BaseChatViewModel", "Error parsing message ${key}: ${e.message}")

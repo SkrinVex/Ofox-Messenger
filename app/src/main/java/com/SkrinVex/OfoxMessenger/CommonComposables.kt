@@ -11,6 +11,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.FileCopy
+import androidx.compose.material.icons.rounded.Reply
 import androidx.compose.material.icons.rounded.Share
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -130,6 +131,7 @@ fun BottomSheetContent(
     item: Any, // Поддерживает Message или PostItem
     isOwnItem: Boolean,
     onCopy: (() -> Unit)? = null,
+    onReply: (() -> Unit)? = null,
     onEdit: (() -> Unit)? = null,
     onDelete: () -> Unit,
     onShare: (() -> Unit)? = null
@@ -151,6 +153,14 @@ fun BottomSheetContent(
                 icon = Icons.Rounded.FileCopy,
                 label = "Копировать",
                 onClick = onCopy
+            )
+        }
+        if (onReply != null && item is Message) {
+            Spacer(modifier = Modifier.height(12.dp))
+            OptionButton(
+                icon = Icons.Rounded.Reply,
+                label = "Ответить",
+                onClick = onReply
             )
         }
         if (isOwnItem) {

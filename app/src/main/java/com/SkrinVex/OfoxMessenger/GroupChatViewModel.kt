@@ -373,20 +373,22 @@ class GroupChatViewModel(
     }
 
     override fun removeNotificationsForMessage(messageId: String) {
-        // ваш существующий код без изменений
         viewModelScope.launch {
             for (uid in members) {
                 if (uid == currentUserId) continue
                 try {
-                    val snap = FirebaseDatabase.getInstance()
+                    val notificationsRef = FirebaseDatabase.getInstance()
                         .getReference("users/$uid/notifications")
-                        .get()
-                        .await()
-                    snap.children.forEach {
-                        val data = it.value as? Map<String, Any>
-                        if (data?.get("type") == "group_message" &&
-                            data["message_id"] == messageId) {
-                            it.ref.removeValue().await()
+
+                    val query = notificationsRef.orderByChild("message_id").equalTo(messageId)
+
+                    val snapshot = query.get().await()
+
+                    for (child in snapshot.children) {
+                        // Дополнительно проверяем тип, чтобы случайно не удалить что-то не то
+                        val notificationType = child.child("type").getValue(String::class.java)
+                        if (notificationType == "group_message") {
+                            child.ref.removeValue().await()
                         }
                     }
                 } catch (e: Exception) {

@@ -31,15 +31,19 @@ class NotificationActionReceiver : BroadcastReceiver() {
             if (chatId != null && messageId != null) {
                 CoroutineScope(Dispatchers.IO).launch {
                     try {
-                        val ref = if (isGroup) {
-                            "group_chats/$chatId/messages/$messageId/status"
+                        if (isGroup) {
+                            // For groups, update the read receipt for the current user
+                            FirebaseDatabase.getInstance()
+                                .getReference("group_chats/$chatId/read_receipts/$messageId/$currentUserId")
+                                .setValue(true)
+                                .await()
                         } else {
-                            "chats/$chatId/messages/$messageId/status"
+                            // For private chats, update the message status
+                            FirebaseDatabase.getInstance()
+                                .getReference("chats/$chatId/messages/$messageId/status")
+                                .setValue("read")
+                                .await()
                         }
-                        FirebaseDatabase.getInstance()
-                            .getReference(ref)
-                            .setValue("read")
-                            .await()
 
                         // Remove notification from database
                         if (notificationId != null) {
@@ -58,14 +62,12 @@ class NotificationActionReceiver : BroadcastReceiver() {
                 }
             }
         } else if (action == "REPLY") {
-            val friendUid = intent.getStringExtra("friend_uid")
             val replyText = RemoteInput.getResultsFromIntent(intent)
                 ?.getCharSequence("key_text_reply")
                 ?.toString()
                 ?.trim()
 
-            if (replyText != null && friendUid != null) {
-                val chatId = if (currentUserId < friendUid) "${currentUserId}_${friendUid}" else "${friendUid}_${currentUserId}"
+            if (replyText != null) {
                 val messageId = UUID.randomUUID().toString()
                 val timestamp = System.currentTimeMillis()
                 val message = mapOf(
@@ -80,51 +82,78 @@ class NotificationActionReceiver : BroadcastReceiver() {
                     try {
                         if (isGroup) {
                             val groupId = intent.getStringExtra("group_id") ?: return@launch
+                            // Send message to group chat
                             FirebaseDatabase.getInstance()
                                 .getReference("group_chats/$groupId/messages/$messageId")
                                 .setValue(message)
                                 .await()
+
+                            // Get group members to send notifications
+                            val groupMetaSnapshot = FirebaseDatabase.getInstance().getReference("group_chats/$groupId/meta").get().await()
+                            val groupData = groupMetaSnapshot.value as? Map<String, Any>
+                            val members = (groupData?.get("members") as? Map<String, Any>)?.keys ?: emptySet()
+                            val groupName = groupData?.get("name") as? String ?: "Групповой чат"
+                            val groupPhoto = groupData?.get("photo") as? String
+
+                            // Send notification to each member
+                            val api = ApiService.create()
+                            for (memberUid in members) {
+                                if (memberUid != currentUserId) {
+                                    api.sendGroupNotification(
+                                        type = "group_message",
+                                        fromUid = currentUserId,
+                                        toUid = memberUid,
+                                        message = replyText,
+                                        chatId = groupId,
+                                        messageId = messageId,
+                                        groupName = groupName,
+                                        groupPhoto = groupPhoto
+                                    )
+                                }
+                            }
+
                         } else {
                             val friendUid = intent.getStringExtra("friend_uid") ?: return@launch
-                            val chatId = if (currentUserId < friendUid)
-                                "${currentUserId}_${friendUid}" else "${friendUid}_${currentUserId}"
+                            val chatId = if (currentUserId < friendUid) "${currentUserId}_${friendUid}" else "${friendUid}_${currentUserId}"
+
+                            // Send message to private chat
                             FirebaseDatabase.getInstance()
                                 .getReference("chats/$chatId/messages/$messageId")
                                 .setValue(message)
                                 .await()
+
+                            // Update status to delivered
+                            FirebaseDatabase.getInstance()
+                                .getReference("chats/$chatId/messages/$messageId/status")
+                                .setValue("delivered")
+                                .await()
+
+                            // Send push notification
+                            val api = ApiService.create()
+                            api.sendNotification(
+                                type = "chat_message",
+                                fromUid = currentUserId,
+                                toUid = friendUid,
+                                message = replyText,
+                                chatId = chatId,
+                                messageId = messageId
+                            )
+
+                            // Add notification to friend's database
+                            val newNotificationId = UUID.randomUUID().toString()
+                            FirebaseDatabase.getInstance()
+                                .getReference("users/$friendUid/notifications/$newNotificationId")
+                                .setValue(
+                                    mapOf(
+                                        "type" to "chat_message",
+                                        "from_uid" to currentUserId,
+                                        "chat_id" to chatId,
+                                        "message_id" to messageId,
+                                        "timestamp" to timestamp,
+                                        "message" to replyText.take(30) + if (replyText.length > 30) "..." else ""
+                                    )
+                                ).await()
                         }
-
-                        // Update status to delivered
-                        FirebaseDatabase.getInstance()
-                            .getReference("chats/$chatId/messages/$messageId/status")
-                            .setValue("delivered")
-                            .await()
-
-                        // Send push notification
-                        val api = ApiService.create()
-                        api.sendNotification(
-                            type = "chat_message",
-                            fromUid = currentUserId,
-                            toUid = friendUid,
-                            message = replyText,
-                            chatId = chatId,
-                            messageId = messageId
-                        )
-
-                        // Add notification to friend's database
-                        val newNotificationId = UUID.randomUUID().toString()
-                        FirebaseDatabase.getInstance()
-                            .getReference("users/$friendUid/notifications/$newNotificationId")
-                            .setValue(
-                                mapOf(
-                                    "type" to "chat_message",
-                                    "from_uid" to currentUserId,
-                                    "chat_id" to chatId,
-                                    "message_id" to messageId,
-                                    "timestamp" to timestamp,
-                                    "message" to replyText.take(30) + if (replyText.length > 30) "..." else ""
-                                )
-                            ).await()
 
                         // Remove original notification from database
                         if (notificationId != null) {
@@ -137,6 +166,7 @@ class NotificationActionReceiver : BroadcastReceiver() {
                         // Cancel the original notification from the system tray
                         val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                         notificationManager.cancel(notificationIdInt)
+
                     } catch (e: Exception) {
                         Log.e("NotificationReceiver", "Error sending reply: ${e.message}", e)
                     }

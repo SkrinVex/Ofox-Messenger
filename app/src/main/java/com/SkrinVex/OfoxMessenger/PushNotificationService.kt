@@ -11,6 +11,7 @@ import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.RemoteInput
+import androidx.core.app.TaskStackBuilder
 import androidx.core.graphics.drawable.toBitmap
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.database.*
@@ -318,7 +319,17 @@ class PushNotificationService : FirebaseMessagingService() {
         }
 
         // Intent for tapping the notification
-        val intent = when (type) {
+        val stackBuilder = TaskStackBuilder.create(this)
+
+        // Add MainPageActivity to the back stack
+        val mainIntent = Intent(this, MainPageActivity::class.java).apply {
+            putExtra("uid", FirebaseAuth.getInstance().currentUser?.uid)
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+        }
+        stackBuilder.addNextIntentWithParentStack(mainIntent)
+
+        // Create the specific intent for the notification's target screen
+        val targetIntent = when (type) {
             "chat_message" -> Intent(this, ChatActivity::class.java).apply {
                 putExtra("friend_uid", fromUid)
                 putExtra("friend_name", title)
@@ -340,17 +351,16 @@ class PushNotificationService : FirebaseMessagingService() {
                 putExtra("uid", fromUid)
                 putExtra("notificationId", notificationId)
             }
-            else -> Intent(this, MainActivity::class.java).apply {
-                putExtra("notificationId", notificationId)
-            }
-        }.apply {
-            addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
+            else -> null // For other types, only the main intent will be in the stack
         }
 
-        val pendingIntent = PendingIntent.getActivity(
-            this,
+        // Add the target intent to the stack if it exists
+        if (targetIntent != null) {
+            stackBuilder.addNextIntent(targetIntent)
+        }
+
+        val pendingIntent = stackBuilder.getPendingIntent(
             notificationIdInt,
-            intent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 

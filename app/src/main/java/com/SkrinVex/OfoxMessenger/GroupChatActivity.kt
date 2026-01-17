@@ -96,6 +96,7 @@ class GroupChatActivity : ComponentActivity() {
         val groupId = intent.getStringExtra("group_id")
         if (groupId != null && ::viewModel.isInitialized) {
             viewModel.setInChat(groupId)
+            viewModel.markAllVisibleMessagesRead()
         }
     }
 

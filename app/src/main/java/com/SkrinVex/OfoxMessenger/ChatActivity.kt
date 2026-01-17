@@ -37,6 +37,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ArrowDownward
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material.icons.rounded.FavoriteBorder
 import androidx.compose.material3.*
@@ -411,6 +412,8 @@ fun BaseChatScreen(
                 onMessageChange = viewModel::updateMessageText,
                 onSendClick = { viewModel.sendMessage() },
                 isSending = state.isSending,
+                replyingTo = state.replyingTo,
+                onCancelReply = { viewModel.cancelReply() },
                 modifier = Modifier
                     .fillMaxWidth()
                     .windowInsetsPadding(WindowInsets.ime)
@@ -449,6 +452,10 @@ fun BaseChatScreen(
                     isOwnItem = selectedMessage!!.senderId == FirebaseAuth.getInstance().currentUser?.uid,
                     onCopy = {
                         copyToClipboard(context, selectedMessage!!.content)
+                        selectedMessage = null
+                    },
+                    onReply = {
+                        viewModel.onReply(selectedMessage!!)
                         selectedMessage = null
                     },
                     onDelete = {
@@ -611,6 +618,24 @@ fun MessageCard(
                                 fontWeight = FontWeight.SemiBold,
                                 modifier = Modifier.padding(bottom = 2.dp)
                             )
+                        }
+
+                        // Reply preview
+                        if (message.replyToMessageContent != null) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(bottom = 4.dp)
+                                    .background(Color.Black.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
+                                    .padding(horizontal = 8.dp, vertical = 4.dp)
+                            ) {
+                                Text(
+                                    text = message.replyToMessageContent,
+                                    color = textColor.copy(alpha = 0.8f),
+                                    fontSize = 13.sp,
+                                    maxLines = 1
+                                )
+                            }
                         }
 
                         SmartLinkText(
@@ -944,6 +969,8 @@ fun MessageInputField(
     onMessageChange: (String) -> Unit,
     onSendClick: () -> Unit,
     isSending: Boolean,
+    replyingTo: Message?,
+    onCancelReply: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Surface(
@@ -953,7 +980,7 @@ fun MessageInputField(
         shape = RoundedCornerShape(24.dp),
         color = Color.Transparent
     ) {
-        Box(
+        Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .background(
@@ -966,6 +993,34 @@ fun MessageInputField(
                     )
                 )
         ) {
+            AnimatedVisibility(visible = replyingTo != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 16.dp, end = 8.dp, top = 8.dp)
+                        .background(Color.Black.copy(alpha = 0.2f), RoundedCornerShape(12.dp))
+                        .padding(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            "Ответ на сообщение:",
+                            color = Color(0xFFFF6B35),
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            replyingTo?.content ?: "",
+                            color = Color.White.copy(alpha = 0.8f),
+                            fontSize = 14.sp,
+                            maxLines = 1
+                        )
+                    }
+                    IconButton(onClick = onCancelReply) {
+                        Icon(Icons.Rounded.Close, contentDescription = "Отменить ответ", tint = Color.Gray)
+                    }
+                }
+            }
             Row(
                 modifier = Modifier
                     .fillMaxWidth()

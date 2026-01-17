@@ -42,7 +42,8 @@ data class PostsState(
     val error: String? = null,
     val hasMorePosts: Boolean = false, // Флаг для проверки наличия дополнительных постов
     val isLoadingMore: Boolean = false, // Флаг для отображения прогресс-бара
-    val lastPostTimestamp: String? = null // Для пагинации
+    val lastPostTimestamp: Long? = null, // Для пагинации (ms since epoch)
+    val replyingToComment: CommentItem? = null
 )
 
 data class PostItem(
@@ -55,6 +56,7 @@ data class PostItem(
     val content: String,
     val image_urls: List<String>? = null,
     val created_at: String,
+    val created_at_ts: Long = 0L,
     val is_edited: Boolean = false,
     val comments: List<CommentItem> = emptyList(),
     val likes: Map<String, String?> = emptyMap(),
@@ -62,13 +64,16 @@ data class PostItem(
 )
 
 data class CommentItem(
-    val id: String,
-    val user_id: String,
+    val id: String = "",           // Добавлено = ""
+    val user_id: String = "",      // Добавлено = ""
     val username: String? = null,
     val nickname: String? = null,
     val profile_photo: String? = null,
-    val content: String,
-    val created_at: String
+    val content: String = "",      // Добавлено = ""
+    val created_at: String = "",   // Добавлено = ""
+    val created_at_ts: Long = 0L,
+    val replyToCommentId: String? = null,
+    val replyToCommentUsername: String? = null
 )
 
 class PostsViewModel(private val uid: String) : ViewModel() {
@@ -102,7 +107,7 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                 val postsSnapshot = withContext(Dispatchers.IO) {
                     FirebaseDatabase.getInstance()
                         .getReference("posts")
-                        .orderByChild("created_at")
+                        .orderByChild("created_at_ts")
                         .limitToLast(2)
                         .get()
                         .await()
@@ -121,7 +126,7 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                     posts = postsList.distinctBy { it.id }, // ← фильтрация дубликатов
                     friends = friendsList,
                     hasMorePosts = postsSnapshot.childrenCount >= 2,
-                    lastPostTimestamp = postsList.lastOrNull()?.created_at
+                    lastPostTimestamp = postsList.lastOrNull()?.created_at_ts
                 )
                 Log.d(TAG, "Initial posts loaded: ${postsList.size}, Friends: ${friendsList.size}")
             } catch (e: Exception) {
@@ -132,52 +137,6 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                     error = "Ошибка загрузки: ${e.message}"
                 )
                 Log.e(TAG, "Error loading posts: ${e.message}", e)
-            }
-        }
-    }
-
-    fun loadRemainingPosts() {
-        viewModelScope.launch {
-            if (!_state.value.hasMorePosts || _state.value.isLoadingMore) return@launch
-            _state.value = _state.value.copy(isLoadingMore = true)
-            try {
-                val lastTimestamp = _state.value.lastPostTimestamp ?: return@launch
-                val existingPostIds = _state.value.posts.map { it.id }.toSet()
-                val postsSnapshot = withContext(Dispatchers.IO) {
-                    FirebaseDatabase.getInstance()
-                        .getReference("posts")
-                        .orderByChild("created_at")
-                        .endBefore(lastTimestamp)
-                        .limitToLast(5)
-                        .get()
-                        .await()
-                }
-                val additionalPosts = mutableListOf<PostItem>()
-                postsSnapshot.children.reversed().forEach { child ->
-                    val map = child.value as? Map<String, Any> ?: return@forEach
-                    val post = processPostSnapshot(child, map)
-                    if (post != null && !existingPostIds.contains(post.id)) {
-                        additionalPosts.add(post)
-                    }
-                }
-
-                val updatedPosts = (_state.value.posts + additionalPosts)
-                    .distinctBy { it.id } // ← фильтрация
-                    .sortedByDescending { it.created_at }
-
-                _state.value = _state.value.copy(
-                    posts = updatedPosts,
-                    isLoadingMore = false,
-                    hasMorePosts = postsSnapshot.childrenCount >= 5,
-                    lastPostTimestamp = additionalPosts.lastOrNull()?.created_at ?: _state.value.lastPostTimestamp
-                )
-                Log.d(TAG, "Remaining posts loaded: ${additionalPosts.size}")
-            } catch (e: Exception) {
-                _state.value = _state.value.copy(
-                    isLoadingMore = false,
-                    error = "Ошибка загрузки дополнительных постов: ${e.message}"
-                )
-                Log.e(TAG, "Error loading remaining posts: ${e.message}", e)
             }
         }
     }
@@ -215,7 +174,9 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                         nickname = commentUserData?.get("nickname") as? String,
                         profile_photo = commentUserData?.get("profile_photo") as? String,
                         content = it["content"] as? String ?: "",
-                        created_at = it["created_at"] as? String ?: ""
+                        created_at = it["created_at"] as? String ?: "",
+                        replyToCommentId = it["replyToCommentId"] as? String,
+                        replyToCommentUsername = it["replyToCommentUsername"] as? String
                     )
                 }
             }
@@ -231,6 +192,23 @@ class PostsViewModel(private val uid: String) : ViewModel() {
             }
             val userReaction = reactions[uid]
 
+            val createdAtTs = when (val v = map["created_at_ts"]) {
+                is Long -> v
+                is Double -> v.toLong()
+                is String -> v.toLongOrNull() ?: System.currentTimeMillis()
+                else -> {
+                    val text = map["created_at"] as? String
+                    text?.let {
+                        try {
+                            SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).parse(it)?.time ?: System.currentTimeMillis()
+                        } catch (_: Exception) {
+                            System.currentTimeMillis()
+                        }
+                    } ?: System.currentTimeMillis()
+                }
+            }
+            val createdAtStr = map["created_at"] as? String ?: SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date(createdAtTs))
+
             PostItem(
                 id = child.key ?: return null,
                 user_id = map["user_id"] as? String ?: "",
@@ -240,7 +218,8 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                 title = map["title"] as? String ?: "",
                 content = map["content"] as? String ?: "",
                 image_urls = imageUrls,
-                created_at = map["created_at"] as? String ?: "",
+                created_at = createdAtStr,
+                created_at_ts = createdAtTs,
                 is_edited = map["is_edited"] as? Boolean ?: false,
                 comments = comments,
                 likes = reactions,
@@ -251,6 +230,60 @@ class PostsViewModel(private val uid: String) : ViewModel() {
             Log.e(TAG, "Error processing post snapshot: ${e.message}", e)
             null
         }
+    }
+
+    fun loadRemainingPosts() {
+        viewModelScope.launch {
+            if (!_state.value.hasMorePosts || _state.value.isLoadingMore) return@launch
+            _state.value = _state.value.copy(isLoadingMore = true)
+            try {
+                val lastTimestamp = _state.value.lastPostTimestamp ?: return@launch
+                val existingPostIds = _state.value.posts.map { it.id }.toSet()
+                val postsSnapshot = withContext(Dispatchers.IO) {
+                    FirebaseDatabase.getInstance()
+                        .getReference("posts")
+                        .orderByChild("created_at_ts")
+                        .endBefore(lastTimestamp)
+                        .limitToLast(5)
+                        .get()
+                        .await()
+                }
+                val additionalPosts = mutableListOf<PostItem>()
+                postsSnapshot.children.reversed().forEach { child ->
+                    val map = child.value as? Map<String, Any> ?: return@forEach
+                    val post = processPostSnapshot(child, map)
+                    if (post != null && !existingPostIds.contains(post.id)) {
+                        additionalPosts.add(post)
+                    }
+                }
+
+                val updatedPosts = (_state.value.posts + additionalPosts)
+                    .distinctBy { it.id } // ← фильтрация
+                    .sortedByDescending { it.created_at_ts }
+
+                _state.value = _state.value.copy(
+                    posts = updatedPosts,
+                    isLoadingMore = false,
+                    hasMorePosts = postsSnapshot.childrenCount >= 5,
+                    lastPostTimestamp = additionalPosts.lastOrNull()?.created_at_ts ?: _state.value.lastPostTimestamp
+                )
+                Log.d(TAG, "Remaining posts loaded: ${additionalPosts.size}")
+            } catch (e: Exception) {
+                _state.value = _state.value.copy(
+                    isLoadingMore = false,
+                    error = "Ошибка загрузки дополнительных постов: ${e.message}"
+                )
+                Log.e(TAG, "Error loading remaining posts: ${e.message}", e)
+            }
+        }
+    }
+
+    fun onReplyToComment(comment: CommentItem) {
+            _state.value = _state.value.copy(replyingToComment = comment)
+        }
+
+    fun cancelReplyToComment() {
+        _state.value = _state.value.copy(replyingToComment = null)
     }
 
     private fun extractMentions(text: String): List<String> {
@@ -466,12 +499,15 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                     Log.d(TAG, "Изображение загружено успешно: $imageUrl")
                 }
 
+                val createdAtTs = System.currentTimeMillis()
+                val createdAtStr = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date(createdAtTs))
                 val post = mapOf(
                     "user_id" to uid,
                     "title" to title,
                     "content" to content,
                     "image_urls" to if (imageUrls.isNotEmpty()) imageUrls else null,
-                    "created_at" to SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date()),
+                    "created_at" to createdAtStr,
+                    "created_at_ts" to createdAtTs,
                     "is_edited" to false
                 )
 
@@ -525,7 +561,8 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                     title = title,
                     content = content,
                     image_urls = if (imageUrls.isNotEmpty()) imageUrls else null,
-                    created_at = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date()),
+                    created_at = createdAtStr,
+                    created_at_ts = createdAtTs,
                     is_edited = false,
                     comments = emptyList(),
                     likes = emptyMap(),
@@ -658,12 +695,25 @@ class PostsViewModel(private val uid: String) : ViewModel() {
             try {
                 val commentId = FirebaseDatabase.getInstance().getReference("posts/$postId/comments").push().key
                     ?: return@launch onComplete(false, "Ошибка создания ID комментария")
-                val createdAt = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date())
-                val comment = mapOf(
+                val createdAtTs = System.currentTimeMillis()
+                val createdAt = SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).format(Date(createdAtTs))
+
+                // Получаем информацию о комментарии, на который отвечаем
+                val replyToComment = _state.value.replyingToComment
+
+                val comment = mutableMapOf<String, Any>(
                     "user_id" to userId,
                     "content" to content,
-                    "created_at" to createdAt
+                    "created_at" to createdAt,
+                    "created_at_ts" to createdAtTs
                 )
+
+                // Если это ответ на комментарий
+                if (replyToComment != null) {
+                    comment["replyToCommentId"] = replyToComment.id
+                    comment["replyToCommentUsername"] = replyToComment.username ?: "Пользователь"
+                }
+
                 FirebaseDatabase.getInstance()
                     .getReference("posts/$postId/comments/$commentId")
                     .setValue(comment)
@@ -706,7 +756,10 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                     nickname = userData?.get("nickname") as? String,
                     profile_photo = userData?.get("profile_photo") as? String,
                     content = content,
-                    created_at = createdAt
+                    created_at = createdAt,
+                    created_at_ts = createdAtTs,
+                    replyToCommentId = replyToComment?.id,
+                    replyToCommentUsername = replyToComment?.username
                 )
                 val updatedPosts = _state.value.posts.map { post ->
                     if (post.id == postId) {
@@ -725,27 +778,67 @@ class PostsViewModel(private val uid: String) : ViewModel() {
         }
     }
 
-    fun deleteComment(postId: String, commentId: String, onComplete: (Boolean, String) -> Unit) {
-        viewModelScope.launch {
+    fun deleteComment(postId: String, commentId: String, onResult: (Boolean, String) -> Unit) {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
-                FirebaseDatabase.getInstance()
-                    .getReference("posts/$postId/comments/$commentId")
-                    .removeValue()
+                // 1. Получаем список ID для удаления (как делали раньше)
+                val snapshot = FirebaseDatabase.getInstance()
+                    .getReference("posts/$postId/comments")
+                    .get()
                     .await()
 
-                // Обновляем пост в состоянии
-                val updatedPosts = _state.value.posts.map { post ->
-                    if (post.id == postId) {
-                        post.copy(comments = post.comments.filter { it.id != commentId })
-                    } else {
-                        post
+                val idsToDelete = mutableListOf<String>()
+                idsToDelete.add(commentId)
+
+                val allComments = snapshot.children.mapNotNull {
+                    it.getValue(CommentItem::class.java)?.copy(id = it.key ?: "")
+                }
+
+                fun collectDescendants(parentId: String) {
+                    val children = allComments.filter { it.replyToCommentId == parentId }
+                    children.forEach { child ->
+                        idsToDelete.add(child.id)
+                        collectDescendants(child.id)
                     }
                 }
-                _state.value = _state.value.copy(posts = updatedPosts)
+                collectDescendants(commentId)
 
-                onComplete(true, "Комментарий удалён успешно")
+                // --- НОВАЯ ЧАСТЬ: МОМЕНТАЛЬНОЕ ОБНОВЛЕНИЕ ЭКРАНА (Optimistic Update) ---
+                // Мы обновляем локальный state, не дожидаясь Firebase
+                val currentPosts = _state.value.posts.toMutableList()
+                val postIndex = currentPosts.indexOfFirst { it.id == postId }
+                if (postIndex != -1) {
+                    val post = currentPosts[postIndex]
+                    // Оставляем только те комментарии, чьих ID НЕТ в списке на удаление
+                    val updatedComments = post.comments.filter { it.id !in idsToDelete }
+
+                    // Обновляем пост в списке
+                    currentPosts[postIndex] = post.copy(comments = updatedComments)
+
+                    // Обновляем StateFlow -> UI перерисуется мгновенно
+                    _state.value = _state.value.copy(posts = currentPosts)
+                }
+                // ---------------------------------------------------------------------
+
+                // 2. Удаляем в Firebase
+                val updates = hashMapOf<String, Any?>()
+                idsToDelete.forEach { id ->
+                    updates[id] = null
+                }
+
+                FirebaseDatabase.getInstance()
+                    .getReference("posts/$postId/comments")
+                    .updateChildren(updates)
+                    .await()
+
+                withContext(Dispatchers.Main) {
+                    // ИСПРАВИЛ ТЕКСТ ТУТ:
+                    onResult(true, "Комментарий удален")
+                }
             } catch (e: Exception) {
-                onComplete(false, "Ошибка удаления комментария: ${e.message}")
+                withContext(Dispatchers.Main) {
+                    onResult(false, e.message ?: "Ошибка удаления")
+                }
             }
         }
     }
@@ -773,18 +866,24 @@ class PostsViewModel(private val uid: String) : ViewModel() {
 
                             // Создаём обновлённый/новый пост
                             val updatedPost = if (existingIndex >= 0) {
-                                val existingPost = currentPosts[existingIndex]
-                                existingPost.copy(
-                                    title = map["title"] as? String ?: existingPost.title,
-                                    content = map["content"] as? String ?: existingPost.content,
-                                    image_urls = (map["image_urls"] as? List<*>)?.mapNotNull { it as? String }
-                                        ?: existingPost.image_urls,
-                                    is_edited = map["is_edited"] as? Boolean ?: existingPost.is_edited,
-                                    created_at = map["created_at"] as? String ?: existingPost.created_at
-                                )
-                            } else {
-                                processPostSnapshot(child, map)
-                            }
+                            val existingPost = currentPosts[existingIndex]
+                            existingPost.copy(
+                                title = map["title"] as? String ?: existingPost.title,
+                                content = map["content"] as? String ?: existingPost.content,
+                                image_urls = (map["image_urls"] as? List<*>)?.mapNotNull { it as? String }
+                                    ?: existingPost.image_urls,
+                                is_edited = map["is_edited"] as? Boolean ?: existingPost.is_edited,
+                                created_at = map["created_at"] as? String ?: existingPost.created_at,
+                                created_at_ts = when (val v = map["created_at_ts"]) {
+                                    is Long -> v
+                                    is Double -> v.toLong()
+                                    is String -> v.toLongOrNull() ?: existingPost.created_at_ts
+                                    else -> existingPost.created_at_ts
+                                }
+                            )
+                        } else {
+                            processPostSnapshot(child, map)
+                        }
 
                             // Добавляем или обновляем
                             if (updatedPost != null) {
@@ -803,7 +902,7 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                         _state.value = _state.value.copy(
                             posts = currentPosts
                                 .distinctBy { it.id } // ← фильтрация
-                                .sortedByDescending { it.created_at }
+                                .sortedByDescending { it.created_at_ts }
                         )
                     } catch (e: Exception) {
                         Log.e(TAG, "Error in posts listener: ${e.message}", e)

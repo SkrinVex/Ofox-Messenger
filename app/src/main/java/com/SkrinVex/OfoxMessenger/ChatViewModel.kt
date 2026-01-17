@@ -19,7 +19,9 @@ data class Message(
     val senderId: String,
     val content: String,
     val timestamp: Long,
-    val status: String
+    val status: String,
+    val replyToMessageId: String? = null,
+    val replyToMessageContent: String? = null
 )
 
 data class ChatState(
@@ -29,7 +31,8 @@ data class ChatState(
     val isLoading: Boolean = true,
     val isLoadingMore: Boolean = false,
     val error: String? = null,
-    val canLoadMore: Boolean = true
+    val canLoadMore: Boolean = true,
+    val replyingTo: Message? = null
 )
 
 data class UserStatus(
@@ -158,14 +161,17 @@ class ChatViewModel(
     override fun removeNotificationsForMessage(messageId: String) {
         viewModelScope.launch {
             try {
-                val notificationsSnapshot = FirebaseDatabase.getInstance()
+                val notificationsRef = FirebaseDatabase.getInstance()
                     .getReference("users/$friendUid/notifications")
-                    .get()
-                    .await()
-                notificationsSnapshot.children.forEach { snapshot ->
-                    val notificationData = snapshot.value as? Map<String, Any>
-                    if (notificationData?.get("type") == "chat_message" && notificationData["message_id"] == messageId) {
-                        snapshot.ref.removeValue().await()
+
+                val query = notificationsRef.orderByChild("message_id").equalTo(messageId)
+
+                val snapshot = query.get().await()
+
+                for (child in snapshot.children) {
+                    val notificationType = child.child("type").getValue(String::class.java)
+                    if (notificationType == "chat_message") {
+                        child.ref.removeValue().await()
                     }
                 }
             } catch (e: Exception) {
