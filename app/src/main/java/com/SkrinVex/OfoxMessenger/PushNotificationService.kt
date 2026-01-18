@@ -55,10 +55,38 @@ class PushNotificationService : FirebaseMessagingService() {
         val commentId = data["comment_id"]
         val message = data["message"]?.trim() ?: "Новое уведомление в Ofox Messenger!"
 
-        // Mark notification as processed
+        // Mark notification as processed (basic dedupe by notification id)
         processedNotifications[notificationId] = System.currentTimeMillis()
 
         CoroutineScope(Dispatchers.IO).launch {
+            // Additional dedupe: if we already processed identical messageId recently, skip
+            if (!messageId.isNullOrBlank()) {
+                val already = processedNotifications[messageId]
+                if (already != null && System.currentTimeMillis() - already < 5000) {
+                    // recently processed same messageId -> skip
+                    return@launch
+                }
+            }
+
+            // If this is a group message and the user is currently in that group chat, skip showing push
+            if (isGroup && !chatId.isNullOrBlank()) {
+                try {
+                    val currentUid = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+                    if (!currentUid.isNullOrBlank()) {
+                        val inChatRef = com.google.firebase.database.FirebaseDatabase.getInstance()
+                            .getReference("users/$currentUid/in_chat_with")
+                        val inChatSnap = inChatRef.get().await()
+                        val inChatVal = inChatSnap.getValue(String::class.java)
+                        if (inChatVal == "group_$chatId") {
+                            // user is already viewing this group -> don't show notification
+                            return@launch
+                        }
+                    }
+                } catch (_: Exception) {
+                    // ignore DB read failures and continue showing notification
+                }
+            }
+
             val (title, content, photoUrl) = if (isGroup) {
                 val groupName = data["group_name"] ?: "Групповой чат"
                 val groupPhotoUrl = data["group_photo"] ?: "https://api.skrinvex.su/default_group_photo.png"
@@ -78,6 +106,10 @@ class PushNotificationService : FirebaseMessagingService() {
             } else {
                 emptyList()
             }
+
+            // Mark messageId as processed too (so duplicate FCMs don't re-show)
+            messageId?.let { processedNotifications[it] = System.currentTimeMillis() }
+            notificationId?.let { processedNotifications[it] = System.currentTimeMillis() }
 
             withContext(Dispatchers.Main) {
                 showNotification(
@@ -158,8 +190,8 @@ class PushNotificationService : FirebaseMessagingService() {
                         return
                     }
 
-                    // Skip chat_message notifications to avoid duplicates with FCM
-                    if (type == "chat_message") {
+                    // Skip chat_message and group_message notifications to avoid duplicates with FCM
+                    if (type == "chat_message" || type == "group_message") {
                         return
                     }
 
@@ -382,10 +414,22 @@ class PushNotificationService : FirebaseMessagingService() {
             builder.setContentText("У вас новые сообщения в группе")
         }
 
-        profilePhotoBitmap?.let { builder.setLargeIcon(it) }
+        // If we have a bitmap (group photo or sender photo) — use it both as large icon and (for group messages) as BigPicture
+        profilePhotoBitmap?.let { bmp ->
+            builder.setLargeIcon(bmp)
+            // For group messages, show big picture style (like Telegram's image preview for group notif)
+            if (type == "group_message") {
+                builder.setStyle(
+                    NotificationCompat.BigPictureStyle()
+                        .bigPicture(bmp)
+                        .bigLargeIcon(null as Bitmap?)
+                        .setSummaryText("Новые сообщения в группе")
+                )
+            }
+        }
 
-        // Add action buttons for chat_message
-        if (type == "chat_message") { // <-- убрали group_message отсюда
+        // Add action buttons for chat_message (only for private chats)
+        if (type == "chat_message") { // <-- actions apply to private chats only
             // MARK AS READ
             val markReadIntent = Intent(this, NotificationActionReceiver::class.java).apply {
                 action = "MARK_AS_READ"
@@ -393,7 +437,7 @@ class PushNotificationService : FirebaseMessagingService() {
                 putExtra("message_id", messageId)
                 putExtra("notification_id", notificationId)
                 putExtra("notification_id_int", notificationIdInt)
-                putExtra("is_group", false) // всегда false для личных чатов
+                putExtra("is_group", false) // always false for private chats
             }
             val markReadPending = PendingIntent.getBroadcast(
                 this,
@@ -403,7 +447,7 @@ class PushNotificationService : FirebaseMessagingService() {
             )
             builder.addAction(R.drawable.ic_check, "Прочитано", markReadPending)
 
-            // Reply action (только для обычных чатов)
+            // Reply action (only for private chats)
             val replyLabel = "Введите ответ"
             val remoteInput = RemoteInput.Builder("key_text_reply")
                 .setLabel(replyLabel)
@@ -413,7 +457,7 @@ class PushNotificationService : FirebaseMessagingService() {
                 action = "REPLY"
                 putExtra("notification_id", notificationId)
                 putExtra("notification_id_int", notificationIdInt)
-                putExtra("friend_uid", fromUid) // только личные чаты
+                putExtra("friend_uid", fromUid) // only private chats
             }
 
             val replyPendingIntent = PendingIntent.getBroadcast(

@@ -97,6 +97,7 @@ class GroupChatActivity : ComponentActivity() {
         if (groupId != null && ::viewModel.isInitialized) {
             viewModel.setInChat(groupId)
             viewModel.markAllVisibleMessagesRead()
+            viewModel.clearNotificationsForGroup()
         }
     }
 

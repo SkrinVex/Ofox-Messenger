@@ -167,6 +167,19 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                             .await()
                     }
                     val commentUserData = commentUserSnapshot.value as? Map<String, Any>
+                    val commentCreatedAtTs = when (val v = it["created_at_ts"]) {
+                        is Long -> v
+                        is Double -> v.toLong()
+                        is String -> v.toLongOrNull() ?: 0L
+                        else -> { // Fallback for old comments
+                            val dateString = it["created_at"] as? String
+                            try {
+                                dateString?.let { SimpleDateFormat("dd.MM.yyyy HH:mm", Locale.getDefault()).parse(it)?.time } ?: 0L
+                            } catch (e: Exception) {
+                                0L
+                            }
+                        }
+                    }
                     CommentItem(
                         id = commentChild.key ?: "",
                         user_id = it["user_id"] as? String ?: "",
@@ -175,6 +188,7 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                         profile_photo = commentUserData?.get("profile_photo") as? String,
                         content = it["content"] as? String ?: "",
                         created_at = it["created_at"] as? String ?: "",
+                        created_at_ts = commentCreatedAtTs,
                         replyToCommentId = it["replyToCommentId"] as? String,
                         replyToCommentUsername = it["replyToCommentUsername"] as? String
                     )
@@ -243,14 +257,14 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                     FirebaseDatabase.getInstance()
                         .getReference("posts")
                         .orderByChild("created_at_ts")
-                        .endBefore(lastTimestamp)
+                        .endAt(lastTimestamp.toDouble())
                         .limitToLast(5)
                         .get()
                         .await()
                 }
                 val additionalPosts = mutableListOf<PostItem>()
-                postsSnapshot.children.reversed().forEach { child ->
-                    val map = child.value as? Map<String, Any> ?: return@forEach
+                for (child in postsSnapshot.children.reversed()) {
+                    val map = child.value as? Map<String, Any> ?: continue
                     val post = processPostSnapshot(child, map)
                     if (post != null && !existingPostIds.contains(post.id)) {
                         additionalPosts.add(post)
@@ -258,13 +272,13 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                 }
 
                 val updatedPosts = (_state.value.posts + additionalPosts)
-                    .distinctBy { it.id } // ← фильтрация
+                    .distinctBy { it.id }
                     .sortedByDescending { it.created_at_ts }
 
                 _state.value = _state.value.copy(
                     posts = updatedPosts,
                     isLoadingMore = false,
-                    hasMorePosts = postsSnapshot.childrenCount >= 5,
+                    hasMorePosts = additionalPosts.isNotEmpty() && additionalPosts.size >= 5,
                     lastPostTimestamp = additionalPosts.lastOrNull()?.created_at_ts ?: _state.value.lastPostTimestamp
                 )
                 Log.d(TAG, "Remaining posts loaded: ${additionalPosts.size}")
@@ -571,7 +585,7 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                 _state.value = _state.value.copy(
                     posts = (_state.value.posts + newPost)
                         .distinctBy { it.id } // ← фильтрация
-                        .sortedByDescending { it.created_at }
+                        .sortedByDescending { it.created_at_ts }
                 )
 
                 onComplete(true, "Пост создан успешно")

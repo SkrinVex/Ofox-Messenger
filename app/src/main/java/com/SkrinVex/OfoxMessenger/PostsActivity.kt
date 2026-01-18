@@ -64,6 +64,7 @@ import androidx.core.graphics.drawable.toBitmap
 import coil.request.ImageRequest
 import com.SkrinVex.OfoxMessenger.ui.common.MorphLoadingIndicator
 import com.SkrinVex.OfoxMessenger.ui.common.enableInternetCheck
+import com.SkrinVex.OfoxMessenger.utils.DateUtils
 import com.SkrinVex.OfoxMessenger.utils.SmartLinkText
 import kotlinx.coroutines.delay
 import java.util.regex.Pattern
@@ -930,7 +931,7 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
             Spacer(modifier = Modifier.height(4.dp))
 
             Text(
-                text = "Дата: ${post.created_at}",
+                text = DateUtils.formatTimestamp(post.created_at_ts),
                 style = MaterialTheme.typography.bodySmall.copy(color = Color.Gray)
             )
 
@@ -1467,7 +1468,7 @@ fun CommentItem(
                     fontSize = if (isReply) 13.sp else 14.sp
                 )
                 Text(
-                    text = comment.created_at,
+                    text = DateUtils.formatTimestamp(comment.created_at_ts),
                     color = Color.Gray,
                     fontSize = if (isReply) 11.sp else 12.sp
                 )

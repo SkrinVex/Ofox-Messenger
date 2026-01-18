@@ -397,6 +397,39 @@ class GroupChatViewModel(
             }
         }
     }
+
+    fun clearNotificationsForGroup() {
+        if (currentUserId.isBlank() || groupId.isBlank()) return
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                val notificationsRef = FirebaseDatabase.getInstance()
+                    .getReference("users/$currentUserId/notifications")
+
+                // Query to find notifications for this specific group chat
+                val query = notificationsRef.orderByChild("chat_id").equalTo(groupId)
+
+                val snapshot = query.get().await()
+                if (!snapshot.exists()) return@launch
+
+                val updates = mutableMapOf<String, Any?>()
+                for (child in snapshot.children) {
+                    // To be safe, double-check the type
+                    val notificationType = child.child("type").getValue(String::class.java)
+                    if (notificationType == "group_message") {
+                        child.key?.let { updates[it] = null }
+                    }
+                }
+
+                if (updates.isNotEmpty()) {
+                    notificationsRef.updateChildren(updates).await()
+                    Log.d("GroupChatViewModel", "Cleared ${updates.size} notifications for group $groupId")
+                }
+
+            } catch (e: Exception) {
+                Log.e("GroupChatViewModel", "Failed to clear notifications for group $groupId: ${e.message}")
+            }
+        }
+    }
 }
 
 class GroupChatViewModelFactory(

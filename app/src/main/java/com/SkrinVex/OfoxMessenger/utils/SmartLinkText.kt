@@ -168,9 +168,13 @@ fun SmartLinkText(
                     val usernameWithAt = annotation.item // уже с @
                     val uid = mentionsMap[usernameWithAt]
                     if (uid != null) {
+                        val currentUid = FirebaseAuth.getInstance().currentUser?.uid
                         val intent = Intent(context, ProfileViewActivity::class.java).apply {
-                            putExtra("uid", FirebaseAuth.getInstance().currentUser?.uid)
-                            putExtra("friend_uid", uid)
+                            putExtra("uid", currentUid)
+                            // Only add friend_uid if it's not the current user's profile
+                            if (uid != currentUid) {
+                                putExtra("friend_uid", uid)
+                            }
                         }
                         context.startActivity(intent)
                     } else {
