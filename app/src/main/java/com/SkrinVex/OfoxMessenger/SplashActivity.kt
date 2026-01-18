@@ -171,43 +171,59 @@ fun SplashScreen() {
         (context as? ComponentActivity)?.finish()
     }
 
-    // МАКСИМАЛЬНО БЫСТРАЯ функция проверки версии
-    suspend fun fetchRemoteAppConfig(): UpdateInfo? = withContext(Dispatchers.IO) {
-        try {
-            val url = URL("https://api.skrinvex.su/ofox.php")
-            val conn = url.openConnection() as HttpURLConnection
+    // УЛУЧШЕННАЯ функция проверки версии
+    // УЛУЧШЕННАЯ функция проверки версии (Исправленная)
+        suspend fun fetchRemoteAppConfig(): UpdateInfo? = withContext(Dispatchers.IO) {
+            var urlConnection: HttpURLConnection? = null
+            try {
+                Log.d("OfoxNetwork", "--> ЗАПРОС ОБНОВЛЕНИЯ: Начинаю соединение...")
+                val url = URL("https://api.skrinvex.su/ofox.php")
+                urlConnection = url.openConnection() as HttpURLConnection
 
-            conn.apply {
-                setRequestProperty("User-Agent", "OfoxChecker")
-                connectTimeout = 2000
-                readTimeout = 2000
-                requestMethod = "GET"
-                doInput = true
-                useCaches = false
-                instanceFollowRedirects = false
-            }
+                urlConnection.apply {
+                    // ИСПРАВЛЕНО: Убрали BuildConfig, поставили заглушку "1.0" или просто "App"
+                    setRequestProperty("User-Agent", "OfoxChecker")
+                    connectTimeout = 10000
+                    readTimeout = 10000
+                    requestMethod = "GET"
+                    doInput = true
+                    useCaches = false
+                    instanceFollowRedirects = true
+                }
 
-            if (conn.responseCode != HttpURLConnection.HTTP_OK) {
-                conn.disconnect()
+                val responseCode = urlConnection.responseCode
+                Log.d("OfoxNetwork", "<-- ОТВЕТ ОБНОВЛЕНИЯ: Код $responseCode")
+
+                if (responseCode == HttpURLConnection.HTTP_OK) {
+                    val response = urlConnection.inputStream.bufferedReader().use { it.readText() }
+                    Log.d("OfoxNetwork", "<-- ТЕЛО ОТВЕТА: $response")
+
+                    val json = JSONObject(response)
+                    // Теперь имена совпадают с PHP скриптом:
+                    val version = json.optString("version", "1.0")
+                    val build = json.optInt("build", 0)
+
+                    val changelogArray = json.optJSONArray("changelog")
+                    val changelogList = mutableListOf<String>()
+                    if (changelogArray != null) {
+                        for (i in 0 until changelogArray.length()) {
+                            changelogList.add(changelogArray.getString(i))
+                        }
+                    }
+
+                    return@withContext UpdateInfo(version, build, changelogList)
+                } else {
+                    Log.e("OfoxNetwork", "Ошибка сервера обновлений: $responseCode")
+                    return@withContext null
+                }
+
+            } catch (e: Exception) {
+                Log.e("OfoxNetwork", "Сбой проверки обновлений: ${e.message}")
                 return@withContext null
+            } finally {
+                urlConnection?.disconnect()
             }
-
-            val response = conn.inputStream.bufferedReader().use { it.readText() }
-            conn.disconnect()
-
-            val json = JSONObject(response)
-            val changelog = json.getJSONArray("changelog").let { array ->
-                List(array.length()) { array.getString(it) }
-            }
-            UpdateInfo(
-                version = json.getString("version"),
-                build = json.getInt("build"),
-                changelog = changelog
-            )
-        } catch (e: Exception) {
-            null
         }
-    }
 
     // СУПЕР БЫСТРАЯ функция удаления аккаунта
     suspend fun deleteCorruptedAccount(uid: String) {
@@ -242,104 +258,160 @@ fun SplashScreen() {
 
     // ГЛАВНАЯ ОПТИМИЗАЦИЯ - параллельные проверки
     LaunchedEffect(Unit) {
-        // Минимальная задержка только 1.5 секунды вместо 3
-        delay(1500)
+            val startTime = System.currentTimeMillis()
+            Log.d("OfoxSplash", "--- НАЧАЛО ЗАГРУЗКИ ---")
 
-        // Параллельно запускаем проверку версии и проверку пользователя
-        val versionCheckJob = async(Dispatchers.IO) { fetchRemoteAppConfig() }
-        val userCheckJob = async(Dispatchers.IO) {
-            if (uid == null) return@async null
+            // 1. Запускаем задачи параллельно (в фоне)
+            val versionCheckJob = async(Dispatchers.IO) {
+                fetchRemoteAppConfig()
+            }
 
-            val user = FirebaseAuth.getInstance().currentUser
-            if (user?.uid != uid) return@async null
+            val userCheckJob = async(Dispatchers.IO) {
+                if (uid == null) return@async null
 
-            try {
-                // Одновременно получаем данные пользователя и обновляем активность
-                val userDataDeferred = async {
-                    FirebaseDatabase.getInstance()
+                // 1. Получаем токен
+                val token = try {
+                    FirebaseAuth.getInstance().currentUser?.getIdToken(true)?.await()?.token
+                } catch (e: Exception) {
+                    return@async null
+                }
+                if (token == null) return@async null
+
+                // 2. Прямой REST запрос (в обход кэша)
+                var dbUrl = FirebaseDatabase.getInstance().reference.toString()
+                if (dbUrl.endsWith("/")) dbUrl = dbUrl.dropLast(1)
+                val checkUrl = "$dbUrl/users/$uid.json?auth=$token&shallow=true"
+
+                try {
+                    val url = URL(checkUrl)
+                    val connection = url.openConnection() as HttpURLConnection
+                    connection.requestMethod = "GET"
+                    connection.connectTimeout = 5000
+                    connection.readTimeout = 5000
+
+                    val code = connection.responseCode
+                    connection.disconnect()
+
+                    // --- ГЛАВНОЕ ИЗМЕНЕНИЕ ---
+                    // Если 401 или 403 -> Мы НЕ бросаем ошибку, а возвращаем СПЕЦИАЛЬНЫЙ ОБЪЕКТ
+                    if (code == 401 || code == 403) {
+                        Log.w("OfoxAuth", "Обнаружен БАН (код $code)")
+                        return@async mapOf("is_banned_user_flag" to true)
+                    }
+                    // --------------------------
+
+                    // Если бана нет, грузим данные штатно (можно через SDK)
+                    val snapshot = FirebaseDatabase.getInstance()
                         .getReference("users/$uid")
                         .get()
                         .await()
+
+                    return@async snapshot.value as? Map<String, Any>
+
+                } catch (e: Exception) {
+                    Log.e("OfoxAuth", "Ошибка проверки: ${e.message}")
+                    return@async null
                 }
+            }
 
-                val userSnapshot = userDataDeferred.await()
+            // 2. Гарантируем, что сплэш висит минимум 2 секунды (чтобы не моргало)
+            val elapsedTime = System.currentTimeMillis() - startTime
+            val minSplashTime = 2000L
+            if (elapsedTime < minSplashTime) {
+                delay(minSplashTime - elapsedTime)
+            }
 
-                userSnapshot.value as? Map<String, Any>
+            // 3. Обрабатываем результаты (Сначала Обновление!)
+            try {
+                val remoteConfig = versionCheckJob.await() // Ждем ответ от сервера обновлений
+
+                if (remoteConfig != null) {
+                    val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
+                    val localVersion = packageInfo.versionName ?: "unknown"
+                    val localBuild = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                        packageInfo.longVersionCode.toInt()
+                    } else {
+                        @Suppress("DEPRECATION") packageInfo.versionCode
+                    }
+
+                    Log.i("OfoxUpdate", "Local: $localBuild, Remote: ${remoteConfig.build}")
+
+                    if (remoteConfig.build > localBuild) {
+                        Log.w("OfoxUpdate", "!!! ТРЕБУЕТСЯ ОБНОВЛЕНИЕ !!!")
+                        updateInfo = remoteConfig
+                        showForceUpdateDialog = true
+                        return@LaunchedEffect // ОСТАНАВЛИВАЕМ ЗАГРУЗКУ, показываем диалог
+                    }
+                }
             } catch (e: Exception) {
-                throw e
+                Log.e("OfoxUpdate", "Ошибка при обработке версии: ${e.message}")
             }
-        }
 
-        // Проверяем версию (не блокируем основной поток)
-        try {
-            val remote = versionCheckJob.await()
-            if (remote != null) {
-                val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-                val localVersion = packageInfo.versionName ?: "unknown"
-                val localBuild = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                    packageInfo.longVersionCode.toInt()
-                } else {
-                    @Suppress("DEPRECATION") packageInfo.versionCode
-                }
-
-                if (remote.version != localVersion || remote.build > localBuild) {
-                    updateInfo = remote
-                    showForceUpdateDialog = true
-                    return@LaunchedEffect
-                }
-            }
-        } catch (e: Exception) {
-            // Игнорируем ошибки проверки версии для ускорения
-            Log.w("VersionCheck", "Проверка версии пропущена: ${e.message}")
-        }
-
-        // Проверяем пользователя
-        try {
-            val profile = userCheckJob.await()
-
-            if (profile == null) {
+            // 4. Обрабатываем пользователя
+            if (uid == null) {
                 clearSessionAndGoToLogin()
                 return@LaunchedEffect
             }
 
-            if (!isUserDataValid(profile)) {
-                launch { deleteCorruptedAccount(uid!!) }
-                prefs.edit().clear().apply()
-                FirebaseAuth.getInstance().signOut()
-                showCorruptedDataDialog = true
-                return@LaunchedEffect
-            }
+            try {
+                val profile = userCheckJob.await() // Получаем результат (безопасно)
 
-            // Переход к нужному активити
-            val flappyPrefs = context.getSharedPreferences("flappy_prefs", Context.MODE_PRIVATE)
-            val openGame = flappyPrefs.getBoolean("open_game", false)
-            flappyPrefs.edit().remove("open_game").apply()
+                // --- ПРОВЕРКА НА БАН ---
+                // Проверяем наш специальный флаг
+                if (profile != null && profile["is_banned_user_flag"] == true) {
+                    Log.e("OfoxFlow", "Аккаунт заблокирован! Показываем диалог.")
 
-            val intent = if (profile.containsKey("username")) {
-                Intent(context, MainPageActivity::class.java).apply {
-                    putExtra("uid", uid)
-                    putExtra("open_game", openGame)
-                }
-            } else {
-                Intent(context, ProfileEditActivity::class.java).apply {
-                    putExtra("uid", uid)
-                }
-            }
-            context.startActivity(intent)
-            (context as? ComponentActivity)?.finish()
-
-        } catch (dbException: Exception) {
-            when {
-                dbException.message?.contains("Permission denied", true) == true ||
-                        dbException.message?.contains("PERMISSION_DENIED", true) == true -> {
+                    // Важно: чистим сессию, чтобы при перезаходе снова проверило
                     prefs.edit().clear().apply()
                     FirebaseAuth.getInstance().signOut()
+
                     showBlockedDialog = true
+                    return@LaunchedEffect // Останавливаем вход
                 }
-                else -> clearSessionAndGoToLogin()
+                // -----------------------
+
+                if (profile == null) {
+                    Log.w("OfoxFlow", "Профиль null -> идем на логин")
+                    clearSessionAndGoToLogin()
+                    return@LaunchedEffect
+                }
+
+                // Проверка на целостность данных
+                if (!isUserDataValid(profile)) {
+                    Log.e("OfoxFlow", "Данные повреждены -> удаляем и диалог")
+                    launch { deleteCorruptedAccount(uid) }
+                    prefs.edit().clear().apply()
+                    FirebaseAuth.getInstance().signOut()
+                    showCorruptedDataDialog = true
+                    return@LaunchedEffect
+                }
+
+                // Успешный вход
+                Log.i("OfoxFlow", "Успешный вход. Переход на MainPage.")
+
+                // Логика перехода
+                val flappyPrefs = context.getSharedPreferences("flappy_prefs", Context.MODE_PRIVATE)
+                val openGame = flappyPrefs.getBoolean("open_game", false)
+                flappyPrefs.edit().remove("open_game").apply()
+
+                val intent = if (profile.containsKey("username")) {
+                    Intent(context, MainPageActivity::class.java).apply {
+                        putExtra("uid", uid)
+                        putExtra("open_game", openGame)
+                    }
+                } else {
+                    Intent(context, ProfileEditActivity::class.java).apply {
+                        putExtra("uid", uid)
+                    }
+                }
+                context.startActivity(intent)
+                (context as? ComponentActivity)?.finish()
+
+            } catch (e: Exception) {
+                Log.e("OfoxFlow", "Неожиданная ошибка: ${e.message}")
+                clearSessionAndGoToLogin()
             }
         }
-    }
 
     // УПРОЩЕННЫЙ UI для быстрой отрисовки
     Box(
