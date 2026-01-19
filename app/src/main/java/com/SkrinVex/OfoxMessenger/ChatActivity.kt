@@ -15,6 +15,7 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -56,6 +57,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
@@ -166,6 +168,7 @@ fun BaseChatScreen(
     val scope = rememberCoroutineScope()
     var selectedMessage by remember { mutableStateOf<Message?>(null) }
     var showDeleteDialog by remember { mutableStateOf(false) }
+    var highlightedMessageId by remember { mutableStateOf<String?>(null) }
 
     var savedScrollPosition by remember { mutableStateOf<Int?>(null) }
     var savedScrollOffset by remember { mutableStateOf(0) }
@@ -182,19 +185,6 @@ fun BaseChatScreen(
         }
     }
 
-    LaunchedEffect(lazyListState.firstVisibleItemIndex, lazyListState.firstVisibleItemScrollOffset) {
-        if (lazyListState.firstVisibleItemIndex == 0 &&
-            lazyListState.firstVisibleItemScrollOffset == 0 &&
-            state.canLoadMore &&
-            !state.isLoadingMore
-        ) {
-            savedScrollPosition = lazyListState.firstVisibleItemIndex
-            savedScrollOffset = lazyListState.firstVisibleItemScrollOffset
-
-            viewModel.loadMoreMessages()
-        }
-    }
-
     val dateFormatter = remember { SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()) }
     val displayDateFormatter = remember { SimpleDateFormat("dd MMMM yyyy", Locale.getDefault()) }
     val groupedMessages = remember(state.messages) {
@@ -203,8 +193,38 @@ fun BaseChatScreen(
         }
     }
 
+    // Used for restoring viewport when loading older messages
     var oldMessagesSize by remember { mutableStateOf(0) }
     var oldGroupedSize by remember { mutableStateOf(0) }
+
+    LaunchedEffect(lazyListState.firstVisibleItemIndex, lazyListState.firstVisibleItemScrollOffset) {
+        if (lazyListState.firstVisibleItemIndex == 0 &&
+            lazyListState.firstVisibleItemScrollOffset == 0 &&
+            state.canLoadMore &&
+            !state.isLoadingMore
+        ) {
+            savedScrollPosition = lazyListState.firstVisibleItemIndex
+            savedScrollOffset = lazyListState.firstVisibleItemScrollOffset
+            oldMessagesSize = state.messages.size
+            oldGroupedSize = groupedMessages.size
+
+            viewModel.loadMoreMessages()
+        }
+    }
+
+    // messageId -> absolute LazyColumn index (date headers included)
+    val messageIndexMap = remember(groupedMessages) {
+        val map = mutableMapOf<String, Int>()
+        var idx = 0
+        groupedMessages.entries.sortedBy { it.key }.forEach { (_, messages) ->
+            idx += 1 // header
+            messages.forEach { msg ->
+                map[msg.id] = idx
+                idx += 1
+            }
+        }
+        map
+    }
 
     // Автоскролл только если новое сообщение и юзер внизу
     LaunchedEffect(state.messages) {
@@ -228,18 +248,21 @@ fun BaseChatScreen(
 
     LaunchedEffect(state.isLoadingMore) {
         if (!state.isLoadingMore && savedScrollPosition != null) {
-            // После load more: новые items добавлены в начало, так что старый first index сдвинут на num_added_items
-            // num_added_items = (new_messages_added + new_groups_added) — посчитайте в viewModel после load
-            // Предположим, viewModel возвращает num_added (или вычислите diff: old_size = state.messages.size before load)
-            val oldMessagesSize = state.messages.size // Но нужно запомнить before load; добавьте var oldSize before viewModel.loadMoreMessages()
-            // После load:
+            // After "load more": items inserted at the TOP, so we restore previous viewport by shifting by inserted count.
             val addedMessages = state.messages.size - oldMessagesSize
-            val addedGroups = groupedMessages.size - oldGroupedSize // Аналогично запомните oldGroupedSize
+            val addedGroups = groupedMessages.size - oldGroupedSize
             val addedItems = addedMessages + addedGroups
 
             val newPosition = savedScrollPosition!! + addedItems
             lazyListState.scrollToItem(newPosition, savedScrollOffset)
             savedScrollPosition = null // Сброс
+        }
+    }
+
+    LaunchedEffect(highlightedMessageId) {
+        if (highlightedMessageId != null) {
+            kotlinx.coroutines.delay(1500)
+            highlightedMessageId = null
         }
     }
 
@@ -336,6 +359,27 @@ fun BaseChatScreen(
                                             currentUserId = currentUserId ?: "",
                                             showAvatar = showAvatar,
                                             showSenderName = showSenderName,
+                                            highlight = highlightedMessageId == message.id,
+                                            replyPreviewAuthor = run {
+                                                val repliedId = message.replyToMessageId
+                                                if (repliedId.isNullOrBlank()) null
+                                                else {
+                                                    val replied = state.messages.firstOrNull { it.id == repliedId }
+                                                    when {
+                                                        replied == null -> null
+                                                        replied.senderId == (currentUserId ?: "") -> "Вы"
+                                                        viewModel is GroupChatViewModel -> viewModel.getMemberName(replied.senderId) ?: "Пользователь"
+                                                        else -> "Собеседник"
+                                                    }
+                                                }
+                                            },
+                                            onReplyPreviewClick = { repliedId ->
+                                                val idx = messageIndexMap[repliedId] ?: return@MessageCard
+                                                scope.launch {
+                                                    lazyListState.animateScrollToItem(idx)
+                                                    highlightedMessageId = repliedId
+                                                }
+                                            },
                                             onLongClick = { selectedMessage = message }
                                         )
                                     }
@@ -520,6 +564,9 @@ fun MessageCard(
     currentUserId: String,
     showAvatar: Boolean = false, // Новый параметр
     showSenderName: Boolean = false, // Новый параметр
+    highlight: Boolean = false,
+    replyPreviewAuthor: String? = null,
+    onReplyPreviewClick: (replyToMessageId: String) -> Unit = {},
     onLongClick: () -> Unit,
     onAvatarClick: (() -> Unit)? = null
 ) {
@@ -604,7 +651,20 @@ fun MessageCard(
                 ),
                 colors = CardDefaults.cardColors(containerColor = Color.Transparent)
             ) {
-                Box(modifier = Modifier.background(backgroundColor)) {
+                val highlightAlpha by animateFloatAsState(
+                    targetValue = if (highlight) 1f else 0f,
+                    animationSpec = tween(durationMillis = 220),
+                    label = "reply_highlight"
+                )
+                Box(
+                    modifier = Modifier
+                        .background(backgroundColor)
+                        .drawBehind {
+                            if (highlightAlpha > 0f) {
+                                drawRect(Color.White.copy(alpha = 0.16f * highlightAlpha))
+                            }
+                        }
+                ) {
                     Column(
                         modifier = Modifier.padding(12.dp),
                         verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -627,14 +687,34 @@ fun MessageCard(
                                     .fillMaxWidth()
                                     .padding(bottom = 4.dp)
                                     .background(Color.Black.copy(alpha = 0.2f), RoundedCornerShape(8.dp))
+                                    .clickable(
+                                        enabled = !message.replyToMessageId.isNullOrBlank(),
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null
+                                    ) {
+                                        message.replyToMessageId?.let { onReplyPreviewClick(it) }
+                                    }
                                     .padding(horizontal = 8.dp, vertical = 4.dp)
                             ) {
-                                Text(
-                                    text = message.replyToMessageContent,
-                                    color = textColor.copy(alpha = 0.8f),
-                                    fontSize = 13.sp,
-                                    maxLines = 1
-                                )
+                                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                    if (!replyPreviewAuthor.isNullOrBlank()) {
+                                        Text(
+                                            text = replyPreviewAuthor,
+                                            color = Color(0xFFFFE0D2),
+                                            fontSize = 12.sp,
+                                            fontWeight = FontWeight.SemiBold,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis
+                                        )
+                                    }
+                                    Text(
+                                        text = message.replyToMessageContent,
+                                        color = textColor.copy(alpha = 0.8f),
+                                        fontSize = 13.sp,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
                             }
                         }
 

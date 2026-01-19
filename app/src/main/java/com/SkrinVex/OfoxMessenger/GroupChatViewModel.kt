@@ -64,11 +64,15 @@ class GroupChatViewModel(
                 // обновляем в groupStatus: количество участников
                 _groupStatus.value = _groupStatus.value.copy(memberCount = newMembers.size)
 
-                loadMemberDetails(newMembers)
-                setupTypingListener()
-                setupOnlineListeners()
-                setupReadReceiptsListener() // (re)создаём слушатель, т.к. members могли измениться
-                loadInitialMessages() // загружаем только после актуализации
+                // IMPORTANT: load member details BEFORE attaching typing/online listeners,
+                // otherwise typing UI will show raw uid instead of nickname.
+                viewModelScope.launch {
+                    loadMemberDetails(newMembers)
+                    setupTypingListener()
+                    setupOnlineListeners()
+                    setupReadReceiptsListener() // (re)создаём слушатель, т.к. members могли измениться
+                    loadInitialMessages() // загружаем только после актуализации
+                }
             }
 
             override fun onCancelled(error: DatabaseError) {
@@ -78,32 +82,30 @@ class GroupChatViewModel(
         })
     }
 
-    private fun loadMemberDetails(uids: List<String>) {
-        viewModelScope.launch {
-            val names = mutableMapOf<String, String>()
-            val photos = mutableMapOf<String, String>()
-            for (uid in uids) {
-                try {
-                    val userSnap = FirebaseDatabase.getInstance()
-                        .getReference("users/$uid")
-                        .get()
-                        .await()
-                    val nickname = userSnap.child("nickname").getValue(String::class.java)
-                    val username = userSnap.child("username").getValue(String::class.java)
-                    val displayName = nickname?.takeIf { it.isNotBlank() }
-                        ?: username?.takeIf { it.isNotBlank() }
-                        ?: "Пользователь"
-                    names[uid] = displayName
-                    photos[uid] = userSnap.child("profile_photo").getValue(String::class.java) ?: ""
-                } catch (e: Exception) {
-                    Log.w("GroupChatViewModel", "Failed to load user $uid: ${e.message}")
-                    names[uid] = "Пользователь"
-                    photos[uid] = ""
-                }
+    private suspend fun loadMemberDetails(uids: List<String>) {
+        val names = mutableMapOf<String, String>()
+        val photos = mutableMapOf<String, String>()
+        for (uid in uids) {
+            try {
+                val userSnap = FirebaseDatabase.getInstance()
+                    .getReference("users/$uid")
+                    .get()
+                    .await()
+                val nickname = userSnap.child("nickname").getValue(String::class.java)
+                val username = userSnap.child("username").getValue(String::class.java)
+                val displayName = nickname?.takeIf { it.isNotBlank() }
+                    ?: username?.takeIf { it.isNotBlank() }
+                    ?: "Пользователь"
+                names[uid] = displayName
+                photos[uid] = userSnap.child("profile_photo").getValue(String::class.java) ?: ""
+            } catch (e: Exception) {
+                Log.w("GroupChatViewModel", "Failed to load user $uid: ${e.message}")
+                names[uid] = "Пользователь"
+                photos[uid] = ""
             }
-            memberNames = names
-            memberPhotos = photos
         }
+        memberNames = names
+        memberPhotos = photos
     }
 
     private fun setupTypingListener() {

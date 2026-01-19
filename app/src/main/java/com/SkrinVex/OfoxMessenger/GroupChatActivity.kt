@@ -95,7 +95,9 @@ class GroupChatActivity : ComponentActivity() {
         super.onResume()
         val groupId = intent.getStringExtra("group_id")
         if (groupId != null && ::viewModel.isInitialized) {
-            viewModel.setInChat(groupId)
+            // IMPORTANT: PushNotificationService & GroupChatViewModel expect the "group_<id>" marker
+            // to suppress notifications while the user is inside the group chat.
+            viewModel.setInChat("group_$groupId")
             viewModel.markAllVisibleMessagesRead()
             viewModel.clearNotificationsForGroup()
         }
