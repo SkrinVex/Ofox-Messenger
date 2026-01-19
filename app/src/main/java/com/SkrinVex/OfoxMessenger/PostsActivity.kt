@@ -59,6 +59,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.core.graphics.drawable.toBitmap
 import coil.request.ImageRequest
@@ -66,6 +67,7 @@ import com.SkrinVex.OfoxMessenger.ui.common.MorphLoadingIndicator
 import com.SkrinVex.OfoxMessenger.ui.common.enableInternetCheck
 import com.SkrinVex.OfoxMessenger.utils.DateUtils
 import com.SkrinVex.OfoxMessenger.utils.SmartLinkText
+import com.SkrinVex.OfoxMessenger.ui.post.PostDetailActivity
 import kotlinx.coroutines.delay
 import java.util.regex.Pattern
 
@@ -92,6 +94,7 @@ fun PostsScreen(viewModel: PostsViewModel) {
     val context = LocalContext.current
     val state by viewModel.state.collectAsState()
     var selectedTab by remember { mutableStateOf("all") } // "all" или "friends"
+    var selectedSort by remember { mutableStateOf("new") } // "new" | "popular"
     var showCreatePostDialog by remember { mutableStateOf(false) }
     var createPostState by remember { mutableStateOf(CreatePostState()) }
     var searchQuery by remember { mutableStateOf("") }
@@ -148,6 +151,11 @@ fun PostsScreen(viewModel: PostsViewModel) {
 
     // Состояние прокрутки
     val lazyListState = rememberLazyListState()
+
+    // Load friends once (posts come from realtime listener)
+    LaunchedEffect(Unit) {
+        viewModel.loadPostsData()
+    }
 
     Scaffold(
         containerColor = Color(0xFF101010),
@@ -239,49 +247,66 @@ fun PostsScreen(viewModel: PostsViewModel) {
             }
         }
     ) { paddingValues ->
-        if (state.isLoading && state.posts.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                MorphLoadingIndicator()            }
-        } else {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(paddingValues)
+        // Отфильтрованный и отсортированный список постов
+        val filteredPosts = run {
+            val base = if (selectedTab == "all") {
+                state.posts
+            } else {
+                state.posts.filter { state.friends.contains(it.user_id) }
+            }
+
+            val searched = if (searchQuery.isBlank()) {
+                base
+            } else {
+                base.filter { post ->
+                    post.title.contains(searchQuery, ignoreCase = true) ||
+                        post.content.contains(searchQuery, ignoreCase = true)
+                }
+            }
+
+            when (selectedSort) {
+                "popular" -> searched.sortedWith(
+                    compareByDescending<PostItem> { it.likes.count { e -> e.value == "like" } }
+                        .thenByDescending { it.created_at_ts }
+                )
+                else -> searched.sortedByDescending { it.created_at_ts }
+            }
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+        ) {
+            LazyColumn(
+                state = lazyListState,
+                modifier = Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                LazyColumn(
-                    state = lazyListState,
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    item {
-                        ModernToggle(
-                            selectedTab = selectedTab,
-                            onTabSelected = { tab ->
-                                selectedTab = tab
-                            },
-                            hasNotifications = false,
-                            tab1Text = "Общая лента",
-                            tab1Value = "all",
-                            tab2Text = "Друзья",
-                            tab2Value = "friends"
-                        )
-                    }
+                item {
+                    ModernToggle(
+                        selectedTab = selectedTab,
+                        onTabSelected = { tab ->
+                            selectedTab = tab
+                        },
+                        hasNotifications = false,
+                        tab1Text = "Общая лента",
+                        tab1Value = "all",
+                        tab2Text = "Друзья",
+                        tab2Value = "friends"
+                    )
+                }
 
-                    val filteredPosts = if (selectedTab == "all") {
-                        state.posts.filter { post ->
-                            post.title.contains(searchQuery, ignoreCase = true) ||
-                                    post.content.contains(searchQuery, ignoreCase = true)
-                        }
-                    } else {
-                        state.posts.filter { post ->
-                            state.friends.contains(post.user_id) &&
-                                    (post.title.contains(searchQuery, ignoreCase = true) ||
-                                            post.content.contains(searchQuery, ignoreCase = true))
-                        }
-                    }
+                item {
+                    SortToggle(
+                        selected = selectedSort,
+                        onSelected = { selectedSort = it }
+                    )
+                }
 
-                    if (filteredPosts.isNotEmpty()) {
+                when {
+                    filteredPosts.isNotEmpty() -> {
                         items(
                             items = filteredPosts,
                             key = { post -> post.id }
@@ -289,10 +314,21 @@ fun PostsScreen(viewModel: PostsViewModel) {
                             PostCard(
                                 post = post,
                                 currentUid = (context as? PostsActivity)?.intent?.getStringExtra("uid") ?: "",
-                                viewModel = viewModel
+                                viewModel = viewModel,
+                                onOpenPost = { postId ->
+                                    PostDetailActivity.start(
+                                        context = context,
+                                        uid = (context as? PostsActivity)?.intent?.getStringExtra("uid") ?: "",
+                                        postId = postId
+                                    )
+                                }
                             )
                         }
-                    } else {
+                    }
+                    state.isLoading -> {
+                        items(3) { PlaceholderPostCard() }
+                    }
+                    else -> {
                         item {
                             Text(
                                 text = if (selectedTab == "all") "Нет постов" else "Нет постов от друзей",
@@ -301,31 +337,153 @@ fun PostsScreen(viewModel: PostsViewModel) {
                             )
                         }
                     }
+                }
 
-                    if (state.isLoadingMore) {
-                        item {
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(16.dp),
-                                contentAlignment = Alignment.Center
-                            ) {
-                                MorphLoadingIndicator()
-                            }
+                if (state.isLoadingMore) {
+                    item {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(16.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            MorphLoadingIndicator()
                         }
                     }
                 }
+            }
 
-                // Подгрузка постов при прокрутке до конца
-                LaunchedEffect(lazyListState) {
-                    snapshotFlow { lazyListState.layoutInfo }
-                        .collect { layoutInfo ->
-                            val lastVisibleItem = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
-                            val totalItems = layoutInfo.totalItemsCount
-                            if (lastVisibleItem >= totalItems - 1 && state.hasMorePosts && !state.isLoadingMore) {
-                                viewModel.loadRemainingPosts()
-                            }
+            // Подгрузка постов при прокрутке до конца
+            LaunchedEffect(lazyListState) {
+                snapshotFlow { lazyListState.layoutInfo }
+                    .collect { layoutInfo ->
+                        val lastVisibleItem = layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0
+                        val totalItems = layoutInfo.totalItemsCount
+                        if (lastVisibleItem >= totalItems - 1 && state.hasMorePosts && !state.isLoadingMore) {
+                            viewModel.loadRemainingPosts()
                         }
+                    }
+            }
+
+            // Keep scroll position stable when realtime updates приходят (Twitter-like)
+            val firstVisibleKey = lazyListState.layoutInfo.visibleItemsInfo.firstOrNull()?.key
+            val firstVisibleOffset = lazyListState.firstVisibleItemScrollOffset
+            LaunchedEffect(filteredPosts.map { it.id }) {
+                if (lazyListState.firstVisibleItemIndex > 0 && firstVisibleKey != null) {
+                    val newIndex = filteredPosts.indexOfFirst { it.id == firstVisibleKey }
+                    if (newIndex >= 0) {
+                        lazyListState.scrollToItem(newIndex, firstVisibleOffset)
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun SortToggle(
+    selected: String,
+    onSelected: (String) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 8.dp, bottom = 4.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(Color(0xFF1E1E1E))
+            .padding(6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        FilterChipButton(
+            text = "Новые",
+            selected = selected == "new",
+            modifier = Modifier.weight(1f),
+            onClick = { onSelected("new") }
+        )
+        FilterChipButton(
+            text = "Популярные",
+            selected = selected == "popular",
+            modifier = Modifier.weight(1f),
+            onClick = { onSelected("popular") }
+        )
+    }
+}
+
+@Composable
+private fun FilterChipButton(
+    text: String,
+    selected: Boolean,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit
+) {
+    val bg = if (selected) Color(0xFFFF6B35).copy(alpha = 0.18f) else Color(0xFF2A2A2A)
+    val fg = if (selected) Color(0xFFFF6B35) else Color.White.copy(alpha = 0.85f)
+    Box(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .background(bg)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null, // use Material3 default ripple from theme
+                onClick = onClick
+            )
+            .padding(vertical = 10.dp),
+        contentAlignment = Alignment.Center
+    ) {
+        Text(text = text, color = fg, fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+    }
+}
+
+@Composable
+private fun PlaceholderPostCard() {
+    Card(
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color(0xFF1E1E1E),
+            contentColor = Color.White
+        ),
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 140.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(40.dp)
+                        .clip(CircleShape)
+                        .background(Color(0xFF2A2A2A))
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Box(
+                    modifier = Modifier
+                        .height(12.dp)
+                        .width(120.dp)
+                        .clip(RoundedCornerShape(4.dp))
+                        .background(Color(0xFF2A2A2A))
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .height(16.dp)
+                    .fillMaxWidth(0.6f)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color(0xFF2A2A2A))
+            )
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                repeat(3) {
+                    Box(
+                        modifier = Modifier
+                            .height(10.dp)
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(Color(0xFF2A2A2A))
+                    )
                 }
             }
         }
@@ -758,7 +916,12 @@ fun ReactionButtons(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
+fun PostCard(
+    post: PostItem,
+    currentUid: String,
+    viewModel: PostsViewModel,
+    onOpenPost: (String) -> Unit = {}
+) {
     val context = LocalContext.current
     val imageLoader = (context.applicationContext as App).imageLoader
     var isImageLoading by remember { mutableStateOf(true) }
@@ -853,7 +1016,8 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
         shape = RoundedCornerShape(12.dp),
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 4.dp),
+            .padding(vertical = 4.dp)
+            .clickable { onOpenPost(post.id) },
         colors = CardDefaults.cardColors(
             containerColor = Color(0xFF1E1E1E),
             contentColor = Color.White
@@ -909,7 +1073,9 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
                 Text(
                     text = post.title,
                     style = MaterialTheme.typography.titleLarge.copy(color = Color(0xFFFF6B35)),
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable { onOpenPost(post.id) }
                 )
                 if (post.is_edited) {
                     Text(
@@ -937,7 +1103,30 @@ fun PostCard(post: PostItem, currentUid: String, viewModel: PostsViewModel) {
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            SmartLinkText(text = post.content)
+            // Preview text (no jumpy layout, supports ellipsis + "Показать дальше")
+            var isLong by remember { mutableStateOf(false) }
+            Text(
+                text = post.content,
+                color = Color.White,
+                style = MaterialTheme.typography.bodyMedium,
+                maxLines = 6,
+                overflow = TextOverflow.Ellipsis,
+                onTextLayout = { isLong = it.hasVisualOverflow },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpenPost(post.id) }
+            )
+            if (isLong) {
+                Text(
+                    text = "Показать дальше",
+                    color = Color(0xFFFF6B35),
+                    fontWeight = FontWeight.SemiBold,
+                    fontSize = 13.sp,
+                    modifier = Modifier
+                        .padding(top = 6.dp)
+                        .clickable { onOpenPost(post.id) }
+                )
+            }
 
             post.image_urls?.takeIf { it.isNotEmpty() }?.let { urls ->
                 Spacer(modifier = Modifier.height(10.dp))

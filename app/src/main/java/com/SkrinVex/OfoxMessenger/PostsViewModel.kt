@@ -86,12 +86,15 @@ class PostsViewModel(private val uid: String) : ViewModel() {
 
     init {
         setupRealtimeListeners()
-        loadPostsData()
     }
 
+    /**
+     * Realtime listener is the main source of truth for posts, so we only pre-load friends here.
+     * This avoids the "initial load then reorder after listener" flicker/jump.
+     */
     fun loadPostsData() {
         viewModelScope.launch {
-            _state.value = PostsState(isLoading = true)
+            _state.value = _state.value.copy(isLoading = true, error = null)
             try {
                 Log.d(TAG, "Loading initial posts data for user: $uid")
                 val friendsSnapshot = withContext(Dispatchers.IO) {
@@ -103,37 +106,12 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                 val friendsList = friendsSnapshot.children
                     .filter { it.child("is_friend").getValue(Boolean::class.java) == true }
                     .mapNotNull { it.key }
-
-                val postsSnapshot = withContext(Dispatchers.IO) {
-                    FirebaseDatabase.getInstance()
-                        .getReference("posts")
-                        .orderByChild("created_at_ts")
-                        .limitToLast(2)
-                        .get()
-                        .await()
-                }
-                val postsList = mutableListOf<PostItem>()
-                postsSnapshot.children.reversed().forEach { child ->
-                    val map = child.value as? Map<String, Any> ?: return@forEach
-                    val post = processPostSnapshot(child, map)
-                    if (post != null) {
-                        postsList.add(post)
-                    }
-                }
-
-                _state.value = PostsState(
-                    isLoading = false,
-                    posts = postsList.distinctBy { it.id }, // ← фильтрация дубликатов
+                _state.value = _state.value.copy(
                     friends = friendsList,
-                    hasMorePosts = postsSnapshot.childrenCount >= 2,
-                    lastPostTimestamp = postsList.lastOrNull()?.created_at_ts
                 )
-                Log.d(TAG, "Initial posts loaded: ${postsList.size}, Friends: ${friendsList.size}")
+                Log.d(TAG, "Friends loaded: ${friendsList.size}")
             } catch (e: Exception) {
-                _state.value = PostsState(
-                    isLoading = false,
-                    posts = emptyList(),
-                    friends = emptyList(),
+                _state.value = _state.value.copy(
                     error = "Ошибка загрузки: ${e.message}"
                 )
                 Log.e(TAG, "Error loading posts: ${e.message}", e)
@@ -916,7 +894,8 @@ class PostsViewModel(private val uid: String) : ViewModel() {
                         _state.value = _state.value.copy(
                             posts = currentPosts
                                 .distinctBy { it.id } // ← фильтрация
-                                .sortedByDescending { it.created_at_ts }
+                                .sortedByDescending { it.created_at_ts },
+                            isLoading = false
                         )
                     } catch (e: Exception) {
                         Log.e(TAG, "Error in posts listener: ${e.message}", e)
