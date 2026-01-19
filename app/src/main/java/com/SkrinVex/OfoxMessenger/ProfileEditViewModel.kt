@@ -25,6 +25,7 @@ import com.google.firebase.storage.FirebaseStorage
 import kotlinx.coroutines.tasks.await
 import java.io.ByteArrayOutputStream
 import java.io.FileOutputStream
+import kotlinx.coroutines.async
 
 fun String.toRequestBodyOrNull(): RequestBody? =
     if (this.isNotBlank()) RequestBody.create("text/plain".toMediaTypeOrNull(), this) else null
@@ -127,6 +128,10 @@ class ProfileEditViewModel(private val uid: String) : ViewModel() {
         )
     }
 
+    /**
+     * Основная функция сохранения.
+     * Автоматически исправляет "битые" ссылки (token=4), даже если пользователь не менял фото.
+     */
     fun saveProfileWithPhoto(
         username: String?,
         nickname: String?,
@@ -145,31 +150,36 @@ class ProfileEditViewModel(private val uid: String) : ViewModel() {
                 val oldProfilePhotoUrl = _state.value.profile?.profile_photo
                 val oldBackgroundPhotoUrl = _state.value.profile?.background_photo
 
-                var profilePhotoUrl: String? = null
-                var backgroundPhotoUrl: String? = null
+                // === 1. Обработка ФОТО (Параллельно) ===
 
-                // === Загружаем новое фото профиля ===
-                if (profilePhotoFile != null) {
-                    val compressedProfileFile = ImageUtils.compressImageFile(profilePhotoFile, maxDimension = 1024)
-                    val storageRef = FirebaseStorage.getInstance().reference
-                        .child("users/$uid/profile_photo.jpg")
-                    storageRef.putFile(Uri.fromFile(compressedProfileFile)).await()
-                    profilePhotoUrl = storageRef.downloadUrl.await().toString()
-                    compressedProfileFile.delete()
+                // Обработка аватара
+                val profilePhotoUrlDeferred = viewModelScope.async { // Добавлено viewModelScope.
+                    if (profilePhotoFile != null) {
+                        uploadAndGetUrl(profilePhotoFile, "profile_photo.jpg", 1024)
+                    } else if (isLinkBroken(oldProfilePhotoUrl)) {
+                        getValidUrlOrNull("profile_photo.jpg")
+                    } else {
+                        null
+                    }
                 }
 
-                // === Загружаем новое фото фона ===
-                if (backgroundPhotoFile != null) {
-                    val compressedBackgroundFile = ImageUtils.compressImageFile(backgroundPhotoFile, maxDimension = 1920)
-                    val storageRef = FirebaseStorage.getInstance().reference
-                        .child("users/$uid/background_photo.jpg")
-                    storageRef.putFile(Uri.fromFile(compressedBackgroundFile)).await()
-                    backgroundPhotoUrl = storageRef.downloadUrl.await().toString()
-                    compressedBackgroundFile.delete()
+                // Обработка фона
+                val backgroundPhotoUrlDeferred = viewModelScope.async { // Добавлено viewModelScope.
+                    if (backgroundPhotoFile != null) {
+                        uploadAndGetUrl(backgroundPhotoFile, "background_photo.jpg", 1920)
+                    } else if (isLinkBroken(oldBackgroundPhotoUrl)) {
+                        getValidUrlOrNull("background_photo.jpg")
+                    } else {
+                        null
+                    }
                 }
 
-                // === Формируем данные для обновления ===
+                val newProfilePhotoUrl = profilePhotoUrlDeferred.await()
+                val newBackgroundPhotoUrl = backgroundPhotoUrlDeferred.await()
+
+                // === 2. Формируем данные для обновления ===
                 val updateData = mutableMapOf<String, Any?>()
+
                 username?.takeIf { it.isNotBlank() && it != "@" && it != _state.value.profile?.username }?.let {
                     updateData["username"] = it
                 }
@@ -189,36 +199,29 @@ class ProfileEditViewModel(private val uid: String) : ViewModel() {
                     updateData["bio"] = it
                 }
 
-                profilePhotoUrl?.let { updateData["profile_photo"] = it }
-                backgroundPhotoUrl?.let { updateData["background_photo"] = it }
+                // Добавляем ссылки только если они изменились (были загружены или исправлены)
+                newProfilePhotoUrl?.let { updateData["profile_photo"] = it }
+                newBackgroundPhotoUrl?.let { updateData["background_photo"] = it }
 
                 if (updateData.isNotEmpty()) {
-                    // === Обновляем профиль ===
+                    // === 3. Обновляем профиль в БД ===
                     profileRef.updateChildren(updateData).await()
 
-                    // === Удаляем старые фото, если они отличаются ===
-                    if (profilePhotoUrl != null && oldProfilePhotoUrl != null && oldProfilePhotoUrl != profilePhotoUrl) {
-                        try {
-                            FirebaseStorage.getInstance().getReferenceFromUrl(oldProfilePhotoUrl).delete().await()
-                        } catch (_: Exception) { }
-                    }
+                    // === 4. УДАЛЕНИЕ СТАРЫХ ФАЙЛОВ УБРАНО ===
+                    // При использовании имен "profile_photo.jpg" Firebase сам заменяет старый файл новым.
+                    // Вызов .delete() здесь приводил к 404, так как удалял только что загруженный файл.
 
-                    if (backgroundPhotoUrl != null && oldBackgroundPhotoUrl != null && oldBackgroundPhotoUrl != backgroundPhotoUrl) {
-                        try {
-                            FirebaseStorage.getInstance().getReferenceFromUrl(oldBackgroundPhotoUrl).delete().await()
-                        } catch (_: Exception) { }
-                    }
-
-                    // === Пересчёт процента заполненности ===
+                    // === 5. Пересчёт процента заполненности ===
                     val currentSnapshot = profileRef.get().await()
                     val currentData = currentSnapshot.value as? Map<String, Any> ?: emptyMap()
                     val newCompletion = calculateProfileCompletion(currentData)
                     profileRef.child("profile_completion").setValue(newCompletion).await()
                 }
 
-                // === Загружаем обновлённый профиль ===
+                // === 6. Получаем итоговый результат для UI ===
                 val updatedSnapshot = profileRef.get().await()
                 val updatedProfileData = updatedSnapshot.value as? Map<String, Any>
+
                 val updatedProfile = if (updatedProfileData != null) {
                     ProfileCheckResponse(
                         success = true,
@@ -230,7 +233,8 @@ class ProfileEditViewModel(private val uid: String) : ViewModel() {
                         bio = updatedProfileData["bio"] as? String,
                         profile_photo = updatedProfileData["profile_photo"] as? String,
                         background_photo = updatedProfileData["background_photo"] as? String,
-                        profile_completion = (updatedProfileData["profile_completion"] as? Long)?.toInt() ?: 0
+                        profile_completion = (updatedProfileData["profile_completion"] as? Number)?.toInt()
+                            ?: 0 // Используем Number для безопасности
                     )
                 } else {
                     ProfileCheckResponse(
@@ -245,9 +249,10 @@ class ProfileEditViewModel(private val uid: String) : ViewModel() {
                     message = "Сохранено!",
                     showSnackbar = true,
                     profile = updatedProfile,
-                    fields = buildFieldsMap(updatedProfile)
+                    fields = buildFieldsMap(updatedProfile) // Убедитесь, что эта функция у вас есть
                 )
                 onSuccess(updatedProfile)
+
             } catch (e: Exception) {
                 _state.value = _state.value.copy(
                     isSaving = false,
@@ -256,6 +261,49 @@ class ProfileEditViewModel(private val uid: String) : ViewModel() {
                 )
             }
         }
+    }
+
+    // ==========================================
+    // ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ (добавьте их в класс)
+    // ==========================================
+
+    /**
+     * Загружает файл, удаляет сжатую копию и возвращает URL.
+     */
+    private suspend fun uploadAndGetUrl(file: File, path: String, maxDim: Int): String {
+        val compressedFile = ImageUtils.compressImageFile(file, maxDimension = maxDim)
+        val storageRef = FirebaseStorage.getInstance().reference.child("users/$uid/$path")
+
+        storageRef.putFile(Uri.fromFile(compressedFile)).await()
+        val url = storageRef.downloadUrl.await().toString()
+
+        compressedFile.delete() // Чистим кэш
+        return url
+    }
+
+    /**
+     * Пытается получить валидную ссылку на существующий файл.
+     * Используется для "лечения" битых ссылок.
+     */
+    private suspend fun getValidUrlOrNull(path: String): String? {
+        return try {
+            val storageRef = FirebaseStorage.getInstance().reference.child("users/$uid/$path")
+            storageRef.downloadUrl.await().toString()
+        } catch (e: Exception) {
+            null // Файла нет или ошибка — оставляем как есть
+        }
+    }
+
+    /**
+     * Проверяет, является ли ссылка "битой" (ошибка token=4).
+     */
+    private fun isLinkBroken(url: String?): Boolean {
+        if (url.isNullOrBlank()) return false
+        // Главный признак проблемы
+        if (url.contains("token=4")) return true
+        // Дополнительная проверка: ссылка должна вести на firebase storage
+        if (!url.contains("firebasestorage.googleapis.com")) return false
+        return false
     }
 
     fun dismissSnackbar() {
@@ -276,7 +324,8 @@ class ProfileEditViewModel(private val uid: String) : ViewModel() {
     }
 
     private fun calculateProfileCompletion(profileData: Map<String, Any?>): Int {
-        val fields = listOf("username", "nickname", "email", "birthday", "status", "bio", "profile_photo", "background_photo")
+        val fields =
+            listOf("username", "nickname", "email", "birthday", "status", "bio", "profile_photo", "background_photo")
         val filledFields = fields.count { field ->
             profileData[field]?.toString()?.isNotBlank() == true
         }
