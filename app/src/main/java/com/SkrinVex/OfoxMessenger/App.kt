@@ -34,12 +34,12 @@ object ImageCacheConfig {
     var enableDisk: Boolean = true
 
     // Детальные настройки кэширования
-    var cacheMessages: Boolean = true
-    var cacheGroupMessages: Boolean = true
+    var cacheMessages: Boolean = false
+    var cacheGroupMessages: Boolean = false
     var cacheNotifications: Boolean = true
     var cacheMedia: Boolean = true
     var cacheAvatars: Boolean = true
-    var cachePosts: Boolean = true
+    var cachePosts: Boolean = false
 
     // Размеры для разных типов
     var messagesCacheSize: Long = 128L * 1024 * 1024
